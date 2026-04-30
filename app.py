@@ -363,15 +363,29 @@ if not modo_real or loja is None:
 
 # ── DIAGNÓSTICO ───────────────────────────────────────────────────────────────
 
+scores_map = {"ONBOARDING INCOMPLETO":70,"NUNCA VENDEU":45,"SEM VENDAS RECENTES":55,"LOJA ATIVA":5}
+
 if ENGINE_OK:
-    diag = diagnosticar_loja(loja)
+    try:
+        diag = diagnosticar_loja(loja)
+        if "score_risco" not in diag:
+            raise Exception("score_risco ausente")
+    except Exception as e:
+        st.warning(f"Motor de diagnóstico indisponível: {e}")
+        ENGINE_OK_LOCAL = False
+        score_fb = scores_map.get(str(loja.get("status_loja","")).upper(), 30)
+        diag = {"score_risco":score_fb,"prioridade":"🔴 CRÍTICA" if score_fb>=70 else "🟠 ALTA" if score_fb>=45 else "🟡 MÉDIA",
+                "sla":"Intervir hoje" if score_fb>=70 else "Intervir em 24h","canal":"E-mail",
+                "causa_raiz":str(loja.get("status_loja","—")),"insights":[],"acoes":["Verificar configurações da loja"],
+                "benchmark":{"avg_dias_venda":23,"taxa_conversao":1.2,"pct_config_sem_venda":96.5},
+                "email":{"assunto":"Sua loja precisa de atenção","corpo":"Olá!\n\nSua loja precisa de atenção.\n\n— Time LI","metrica_impacto":"Ação em 24h"}}
 else:
-    scores = {"ONBOARDING INCOMPLETO":70,"NUNCA VENDEU":45,"SEM VENDAS RECENTES":55,"LOJA ATIVA":5}
-    score  = scores.get(str(loja.get("status_loja","")).upper(), 30)
-    diag   = {"score_risco":score,"prioridade":"🔴 CRÍTICA" if score>=70 else "🟠 ALTA",
-              "sla":"Intervir hoje","canal":"E-mail + CS","causa_raiz":loja.get("status_loja",""),
-              "insights":[],"acoes":["Verificar configurações"],"benchmark":{},
-              "email":{"assunto":"Atenção necessária","corpo":"Olá!\n\nSua loja precisa de atenção.\n\n— Time LI","metrica_impacto":"Ação em 24h"}}
+    score_fb = scores_map.get(str(loja.get("status_loja","")).upper(), 30)
+    diag = {"score_risco":score_fb,"prioridade":"🔴 CRÍTICA" if score_fb>=70 else "🟠 ALTA" if score_fb>=45 else "🟡 MÉDIA",
+            "sla":"Intervir hoje" if score_fb>=70 else "Intervir em 24h","canal":"E-mail",
+            "causa_raiz":str(loja.get("status_loja","—")),"insights":[],"acoes":["Verificar configurações da loja"],
+            "benchmark":{"avg_dias_venda":23,"taxa_conversao":1.2,"pct_config_sem_venda":96.5},
+            "email":{"assunto":"Sua loja precisa de atenção","corpo":"Olá!\n\nSua loja precisa de atenção.\n\n— Time LI","metrica_impacto":"Ação em 24h"}}
 
 score      = diag["score_risco"]
 prioridade = diag["prioridade"]
