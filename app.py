@@ -348,8 +348,37 @@ if modo_real:
                 st.error(f"Loja {loja_id} não encontrada.")
                 st.stop()
             loja = loja_df.iloc[0].to_dict()
-            onb  = onb_df.iloc[0].to_dict() if not onb_df.empty else demo_onb(loja_id)
-            env  = env_df.iloc[0].to_dict() if not env_df.empty else demo_env(loja_id)
+            # Se não tem onboarding recente, monta a partir da mv_loja
+            if not onb_df.empty:
+                onb = onb_df.iloc[0].to_dict()
+            else:
+                onb = dict(
+                    flag_wizard_1=1,
+                    flag_wizard_2=1,
+                    flag_wizard_3=None,
+                    produtos=None,
+                    visitas=loja.get("qtde_visitas_ultimos_30d"),
+                    pedidos_cap=loja.get("qtd_pedido_ultimos_30d"),
+                    pedidos_apr=loja.get("qtd_pedido_ultimos_30d"),
+                    gmv_cap=loja.get("vlr_gmv_ultimos_30d"),
+                    gmv_apr=loja.get("vlr_gmv_ultimos_30d"),
+                    primeira_venda_origem_cap=None,
+                    data_primeira_venda_apr=loja.get("data_primeira_venda"),
+                )
+            # Se não tem Enviali, monta estrutura vazia
+            if not env_df.empty:
+                env = env_df.iloc[0].to_dict()
+            else:
+                env = dict(
+                    flag_ativacao_enviali=0,flag_ativacao_pac=0,
+                    flag_ativacao_sedex=0,flag_ativacao_jadlog=0,
+                    flag_ativacao_zum_loggi=0,
+                    etiquetas_compradas_enviali=None,etiquetas_postadas_enviali=None,
+                    etiquetas_canceladas_enviali=None,
+                    etiquetas_compradas_pac=None,etiquetas_compradas_sedex=None,
+                    etiquetas_compradas_jadlog=None,
+                    pedidos_cotados_enviali=None,gmv=None,pedidos=None,
+                )
 
     except Exception as e:
         st.warning(f"Erro na conexão: {e}. Usando dados simulados.")
