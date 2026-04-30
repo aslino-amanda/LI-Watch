@@ -107,6 +107,7 @@ def _db():
 
 def rodar_sql(sql):
     import urllib.request, json as _json
+    s = st.secrets["metabase"]
     payload = _json.dumps({
         "database": _db(),
         "native":   {"query": sql},
@@ -115,7 +116,7 @@ def rodar_sql(sql):
     req = urllib.request.Request(
         f"{_url()}/api/dataset",
         data=payload,
-        headers=_headers(),
+        headers={"Content-Type": "application/json", "x-api-key": s["api_key"]},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
