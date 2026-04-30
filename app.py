@@ -392,29 +392,162 @@ if not modo_real or loja is None:
 
 # ── DIAGNÓSTICO ───────────────────────────────────────────────────────────────
 
-scores_map = {"ONBOARDING INCOMPLETO":70,"NUNCA VENDEU":45,"SEM VENDAS RECENTES":55,"LOJA ATIVA":5}
+# ── Motor de diagnóstico inline (não depende de arquivo externo) ──────────────
 
+BENCHMARK_INLINE = {
+    "MODA E ACESSÓRIOS":                           {"avg_dias_venda": 24.9, "taxa_conversao": 1.1},
+    "COSMÉTICOS, PERFUMARIA E CUIDADOS PESSOAIS":  {"avg_dias_venda": 22.4, "taxa_conversao": 1.3},
+    "ALIMENTOS E BEBIDAS":                         {"avg_dias_venda": 23.3, "taxa_conversao": 1.2},
+    "ELETRÔNICOS":                                 {"avg_dias_venda": 25.2, "taxa_conversao": 1.1},
+    "FITNESS E SUPLEMENTOS":                       {"avg_dias_venda": 12.8, "taxa_conversao": 1.8},
+    "ESPORTE E LAZER":                             {"avg_dias_venda": 26.8, "taxa_conversao": 1.7},
+    "CASA E DECORAÇÃO":                            {"avg_dias_venda": 31.5, "taxa_conversao": 1.2},
+    "INFORMÁTICA":                                 {"avg_dias_venda": 16.3, "taxa_conversao": 1.7},
+    "ARTESANATO":                                  {"avg_dias_venda": 22.3, "taxa_conversao": 1.1},
+    "SAÚDE":                                       {"avg_dias_venda": 50.5, "taxa_conversao": 0.9},
+    "DEFAULT":                                     {"avg_dias_venda": 23.0, "taxa_conversao": 1.2},
+}
+
+EMAILS_INLINE = {
+    "ONBOARDING INCOMPLETO": {
+        "assunto": "Sua loja está quase pronta — falta pouco para a primeira venda",
+        "corpo": "Olá, {nome}!\n\nIdentificamos que sua loja ainda precisa de algumas configurações para estar pronta para vender.\n\n{itens}\n\n— Time Loja Integrada",
+        "metrica": "Config completa em 24h após contato"
+    },
+    "NUNCA VENDEU": {
+        "assunto": "Sua loja está configurada — veja como atrair os primeiros compradores",
+        "corpo": "Olá, {nome}!\n\nSua loja está configurada e pronta. Agora é hora de atrair visitantes e converter em vendas.\n\n→ Compartilhe o link da sua loja no WhatsApp\n→ Poste fotos dos produtos no Instagram\n→ Peça indicações para amigos e familiares\n\n— Time Loja Integrada",
+        "metrica": "1ª venda em até 15 dias após contato"
+    },
+    "SEM VENDAS RECENTES": {
+        "assunto": "Sua loja ficou um tempo sem vendas — veja como reativar",
+        "corpo": "Olá, {nome}!\n\nNotamos que sua loja está há alguns dias sem registrar vendas.\n\n→ Verifique se os produtos estão com estoque\n→ Atualize fotos e descrições\n→ Considere uma promoção ou frete grátis\n\n— Time Loja Integrada",
+        "metrica": "Retorno de vendas em até 30 dias após contato"
+    },
+}
+
+def _diagnostico_inline(loja):
+    status = str(loja.get("status_loja","")).upper().strip()
+    seg    = str(loja.get("segmento_loja","")).upper().strip()
+    bench  = BENCHMARK_INLINE.get(seg, BENCHMARK_INLINE["DEFAULT"])
+    origem = "PAGO" if loja.get("aquisicao_utm_source") else "ORGÂNICO"
+
+    from datetime import date, datetime as _dt
+    def _dias(d):
+        if not d or str(d) in ("None","nan",""): return 0
+        try:
+            dt = _dt.strptime(str(d)[:10], "%Y-%m-%d").date()
+            return (date.today() - dt).days
+        except: return 0
+
+    dias = _dias(loja.get("data_cadastro_loja"))
+    avg  = bench["avg_dias_venda"] or 23
+    ratio = round(dias / avg, 1) if avg > 0 and dias > 0 else 0.0
+
+    tem_prod = loja.get("data_primeira_config_produto") not in (None,"","None")
+    tem_pag  = loja.get("data_primeira_config_pagamento") not in (None,"","None")
+    tem_log  = loja.get("data_primeira_config_logistica") not in (None,"","None")
+    visitas  = int(loja.get("qtde_visitas_ultimos_30d") or 0)
+    gmv      = float(loja.get("vlr_gmv_ultimos_30d") or 0)
+
+    # Score
+    score = 0
+    causas = []
+    insights = []
+    acoes = []
+
+    if status == "ONBOARDING INCOMPLETO":
+        score = 70 if dias >= 7 else 50
+        if tem_prod and not tem_pag:
+            causas.append("Configurou produto mas NÃO ativou pagamento")
+            insights.append("Gargalo crítico — sem pagamento nenhum pedido pode ser finalizado.")
+            acoes.append("Ativar Pagali — 5 minutos para destravar vendas")
+        elif tem_prod and tem_pag and not tem_log:
+            causas.append("Pagamento ativo mas frete NÃO configurado")
+            insights.append("Checkout trava na etapa de entrega. Ativar Enviali resolve.")
+            acoes.append("Configurar Enviali — último passo para a primeira venda")
+        else:
+            causas.append("Configurações básicas incompletas")
+            acoes.append("Completar checklist de configuração da loja")
+        if origem == "PAGO":
+            score += 10
+            insights.append("Loja veio de canal pago — custo de aquisição em risco.")
+
+    elif status == "NUNCA VENDEU":
+        score = 40 if ratio >= 2 else 25
+        if ratio >= 2:
+            causas.append(f"Há {dias} dias sem vender — {ratio}x acima da média de {seg} ({avg} dias)")
+            insights.append(f"Segmento {seg} leva em média {avg} dias para 1ª venda. Esta loja está {ratio}x além.")
+        else:
+            causas.append(f"Dentro da janela esperada ({dias}/{avg} dias)")
+        if visitas >= 50:
+            score += 15
+            insights.append(f"{visitas} visitas mas zero vendas — problema de conversão (fotos, preço ou descrição).")
+            acoes.append("E-mail com dicas de conversão — fotos, preço e descrição")
+        elif visitas == 0:
+            score += 10
+            insights.append("Zero visitas — loja configurada mas invisível. Divulgação é o próximo passo.")
+            acoes.append("E-mail com checklist de divulgação — WhatsApp e Instagram")
+        else:
+            acoes.append("E-mail com estratégias para primeira venda")
+
+    elif status == "SEM VENDAS RECENTES":
+        score = 55
+        causas.append("Loja que vendia entrou em inatividade")
+        if gmv == 0 and visitas == 0:
+            score = 70
+            insights.append("Zero pedidos e zero visitas nos últimos 30 dias — parada total.")
+            acoes.append("CS verificar urgente: loja acessível e produtos ativos")
+        elif gmv == 0:
+            insights.append("Visitas existem mas sem conversão — verificar estoque e preços.")
+            acoes.append("E-mail de reativação com dicas de conversão")
+        else:
+            acoes.append("Monitorar evolução nos próximos 7 dias")
+
+    else:  # LOJA ATIVA
+        score = 5
+        causas.append("Loja ativa e saudável")
+        insights.append(f"{visitas} visitas e R${gmv:,.2f} GMV nos últimos 30 dias.")
+        acoes.append("Monitorar normalmente")
+
+    score = max(0, min(100, score))
+
+    if score >= 70:   prio = "🔴 CRÍTICA"; sla = "Intervir hoje"; canal = "E-mail imediato + alerta CS"
+    elif score >= 45: prio = "🟠 ALTA";    sla = "Intervir em 24h"; canal = "E-mail automático"
+    elif score >= 25: prio = "🟡 MÉDIA";   sla = "Intervir em 48h"; canal = "E-mail automático"
+    else:             prio = "🟢 BAIXA";   sla = "Monitorar";       canal = "Sem ação necessária"
+
+    # Monta email
+    email_tpl = EMAILS_INLINE.get(status, {"assunto":"Acompanhamento da sua loja","corpo":"Olá!\n\n— Time LI","metrica":"Acompanhamento"})
+    itens = []
+    if not tem_prod: itens.append("→ Cadastrar pelo menos 1 produto")
+    if not tem_pag:  itens.append("→ Configurar pagamento (Pagali)")
+    if not tem_log:  itens.append("→ Configurar frete (Enviali)")
+    corpo = email_tpl["corpo"].format(nome=loja.get("nome_loja","Lojista"), itens="\n".join(itens) if itens else "→ Revisar configurações gerais")
+
+    return {
+        "score_risco":  score,
+        "prioridade":   prio,
+        "sla":          sla,
+        "canal":        canal,
+        "causa_raiz":   " | ".join(causas) if causas else status,
+        "insights":     insights,
+        "acoes":        acoes if acoes else ["Monitorar normalmente"],
+        "benchmark":    bench,
+        "dias_cadastro": dias,
+        "email":        {"assunto": email_tpl["assunto"], "corpo": corpo, "metrica_impacto": email_tpl["metrica"]},
+    }
+
+# Roda diagnóstico — engine externo ou inline
 if ENGINE_OK:
     try:
         diag = diagnosticar_loja(loja)
         if "score_risco" not in diag:
-            raise Exception("score_risco ausente")
-    except Exception as e:
-        st.warning(f"Motor de diagnóstico indisponível: {e}")
-        ENGINE_OK_LOCAL = False
-        score_fb = scores_map.get(str(loja.get("status_loja","")).upper(), 30)
-        diag = {"score_risco":score_fb,"prioridade":"🔴 CRÍTICA" if score_fb>=70 else "🟠 ALTA" if score_fb>=45 else "🟡 MÉDIA",
-                "sla":"Intervir hoje" if score_fb>=70 else "Intervir em 24h","canal":"E-mail",
-                "causa_raiz":str(loja.get("status_loja","—")),"insights":[],"acoes":["Verificar configurações da loja"],
-                "benchmark":{"avg_dias_venda":23,"taxa_conversao":1.2,"pct_config_sem_venda":96.5},
-                "email":{"assunto":"Sua loja precisa de atenção","corpo":"Olá!\n\nSua loja precisa de atenção.\n\n— Time LI","metrica_impacto":"Ação em 24h"}}
+            diag = _diagnostico_inline(loja)
+    except:
+        diag = _diagnostico_inline(loja)
 else:
-    score_fb = scores_map.get(str(loja.get("status_loja","")).upper(), 30)
-    diag = {"score_risco":score_fb,"prioridade":"🔴 CRÍTICA" if score_fb>=70 else "🟠 ALTA" if score_fb>=45 else "🟡 MÉDIA",
-            "sla":"Intervir hoje" if score_fb>=70 else "Intervir em 24h","canal":"E-mail",
-            "causa_raiz":str(loja.get("status_loja","—")),"insights":[],"acoes":["Verificar configurações da loja"],
-            "benchmark":{"avg_dias_venda":23,"taxa_conversao":1.2,"pct_config_sem_venda":96.5},
-            "email":{"assunto":"Sua loja precisa de atenção","corpo":"Olá!\n\nSua loja precisa de atenção.\n\n— Time LI","metrica_impacto":"Ação em 24h"}}
+    diag = _diagnostico_inline(loja)
 
 score      = diag["score_risco"]
 prioridade = diag["prioridade"]
