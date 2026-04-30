@@ -92,7 +92,7 @@ def _headers():
     try:
         cfg = st.secrets["metabase"]
         if "api_key" in cfg:
-            return {"X-Api-Key": cfg["api_key"], "Content-Type": "application/json"}
+            return {"x-api-key": cfg["api_key"], "Content-Type": "application/json"}
         return {"X-Metabase-Session": cfg["token"], "Content-Type": "application/json"}
     except:
         return {}
@@ -106,13 +106,20 @@ def _db():
     except: return 11
 
 def rodar_sql(sql):
-    r = requests.post(f"{_url()}/api/dataset",
+    import urllib.request, json as _json
+    payload = _json.dumps({
+        "database": _db(),
+        "native":   {"query": sql},
+        "type":     "native",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{_url()}/api/dataset",
+        data=payload,
         headers=_headers(),
-        json={"database": _db(), "type": "native", "native": {"query": sql}},
-        timeout=60)
-    if r.status_code != 200:
-        raise Exception(f"Erro {r.status_code}: {r.text[:200]}")
-    data = r.json()
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = _json.loads(resp.read().decode("utf-8"))
     if "error" in data:
         raise Exception(data["error"])
     cols = [c["name"] for c in data["data"]["cols"]]
