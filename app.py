@@ -158,7 +158,7 @@ def rodar_sql(sql):
 def buscar_dados_loja(loja_id: int):
     """Busca todos os dados da loja nas 3 tabelas."""
 
-    # mv_loja — dados gerais
+    # mv_loja — dados gerais + pagamentos + fretes + marketplace
     sql_loja = f"""
     SELECT
         loja_id,
@@ -184,6 +184,35 @@ def buscar_dados_loja(loja_id: int):
         data_primeira_venda,
         qtd_pedido_ultimos_30d,
         vlr_gmv_ultimos_30d,
+        wizard_produto,
+        -- Pagamentos
+        flag_ativo_pagali_cartao,
+        flag_ativo_pagali_boleto,
+        flag_ativo_pagali_pix,
+        flag_ativo_mercadopago_cartao,
+        flag_ativo_mercadopago_boleto,
+        flag_ativo_pagseguro_cartao,
+        flag_ativo_pagseguro_boleto,
+        flag_ativo_paypal_cartao,
+        flag_ativo_outros_pagamentoexterno,
+        -- Fretes
+        flag_ativo_enviali,
+        flag_ativo_enviali_correios_pac,
+        flag_ativo_enviali_correios_sedex,
+        flag_ativo_enviali_jadlog,
+        flag_ativo_enviali_zum_loggi,
+        flag_ativo_correios_pac,
+        flag_ativo_correios_sedex,
+        flag_ativo_melhor_envio,
+        flag_ativo_frenet,
+        flag_ativo_motoboy,
+        flag_ativo_retirar_pessoalmente,
+        -- Marketplace
+        flag_config_magalu,
+        flag_enviou_produto_magalu,
+        data_primeira_venda_magalu,
+        qtd_pedido_magalu_ultimos_30d,
+        vlr_gmv_magalu_ultimos_30d,
         CASE
             WHEN data_primeira_config_pagamento IS NULL
               OR data_primeira_config_logistica IS NULL
@@ -649,30 +678,88 @@ with col_t1:
     tem_vis  = loja.get("data_primeira_visita") not in (None,"","None")
     tem_venda= loja.get("data_primeira_venda") not in (None,"","None")
 
-    # Wizard steps do onboarding
-    # Se loja está ativa (tem produto, pagamento e frete), wizard é completo
+    # Wizard — se configurada considera completo
     loja_configurada = tem_prod and tem_pag and tem_log
     w1 = int(onb.get("flag_wizard_1") or (1 if loja_configurada else 0))
     w2 = int(onb.get("flag_wizard_2") or (1 if loja_configurada else 0))
     w3_raw = onb.get("flag_wizard_3")
     w3 = int(w3_raw) if w3_raw is not None and str(w3_raw) not in ("None","nan","") else (1 if loja_configurada else 0)
 
-    # Enviali
-    env_ativo  = int(env.get("flag_ativacao_enviali") or 0)
-    pac_ativo  = int(env.get("flag_ativacao_pac") or 0)
-    sdx_ativo  = int(env.get("flag_ativacao_sedex") or 0)
-    jdl_ativo  = int(env.get("flag_ativacao_jadlog") or 0)
-    zum_ativo  = int(env.get("flag_ativacao_zum_loggi") or 0)
+    # Produtos — usa wizard_produto da mv_loja diretamente
+    _prod_raw = loja.get("wizard_produto") or onb.get("produtos")
+    produtos  = int(float(_prod_raw)) if _prod_raw is not None and str(_prod_raw) not in ("None","nan","0","") else None
+
+    # Fretes — usa mv_loja diretamente (mais completo)
+    def _flag(campo): return int(loja.get(campo) or env.get(campo.replace("flag_ativo_","flag_ativacao_").replace("enviali_correios_","").replace("enviali_","")) or 0)
+    env_ativo  = int(loja.get("flag_ativo_enviali") or env.get("flag_ativacao_enviali") or 0)
+    pac_ativo  = int(loja.get("flag_ativo_enviali_correios_pac") or loja.get("flag_ativo_correios_pac") or env.get("flag_ativacao_pac") or 0)
+    sdx_ativo  = int(loja.get("flag_ativo_enviali_correios_sedex") or loja.get("flag_ativo_correios_sedex") or env.get("flag_ativacao_sedex") or 0)
+    jdl_ativo  = int(loja.get("flag_ativo_enviali_jadlog") or env.get("flag_ativacao_jadlog") or 0)
+    zum_ativo  = int(loja.get("flag_ativo_enviali_zum_loggi") or env.get("flag_ativacao_zum_loggi") or 0)
+    melhor_envio = int(loja.get("flag_ativo_melhor_envio") or 0)
+    frenet     = int(loja.get("flag_ativo_frenet") or 0)
+    motoboy    = int(loja.get("flag_ativo_motoboy") or 0)
+    retirada   = int(loja.get("flag_ativo_retirar_pessoalmente") or 0)
+
+    # Pagamentos da mv_loja
+    pag_pagali_cartao = int(loja.get("flag_ativo_pagali_cartao") or 0)
+    pag_pagali_pix    = int(loja.get("flag_ativo_pagali_pix") or 0)
+    pag_pagali_boleto = int(loja.get("flag_ativo_pagali_boleto") or 0)
+    pag_mp_cartao     = int(loja.get("flag_ativo_mercadopago_cartao") or 0)
+    pag_mp_boleto     = int(loja.get("flag_ativo_mercadopago_boleto") or 0)
+    pag_pags_cartao   = int(loja.get("flag_ativo_pagseguro_cartao") or 0)
+    pag_externo       = int(loja.get("flag_ativo_outros_pagamentoexterno") or 0)
+    algum_pagamento   = any([pag_pagali_cartao, pag_pagali_pix, pag_pagali_boleto,
+                             pag_mp_cartao, pag_mp_boleto, pag_pags_cartao, pag_externo])
+
+    # Marketplace
+    magalu_config = int(loja.get("flag_config_magalu") or 0)
+    magalu_venda  = int(loja.get("flag_enviou_produto_magalu") or 0)
+    gmv_magalu    = float(loja.get("vlr_gmv_magalu_ultimos_30d") or 0)
+    ped_magalu    = int(loja.get("qtd_pedido_magalu_ultimos_30d") or 0)
 
     gmv_30d    = float(loja.get("vlr_gmv_ultimos_30d") or 0)
     pedidos_30d= int(loja.get("qtd_pedido_ultimos_30d") or 0)
     visitas_30d= int(loja.get("qtde_visitas_ultimos_30d") or 0)
-    _prod_raw = onb.get("produtos")
-    produtos  = int(_prod_raw) if _prod_raw is not None and str(_prod_raw) not in ("None","nan","0","") else None
+
+    # Monta seção de pagamentos
+    pag_html = ""
+    if pag_pagali_cartao or pag_pagali_pix or pag_pagali_boleto:
+        modos = []
+        if pag_pagali_cartao: modos.append("Cartão")
+        if pag_pagali_pix:    modos.append("Pix")
+        if pag_pagali_boleto: modos.append("Boleto")
+        pag_html += linha("Pagali", tag_val(", ".join(modos)))
+    if pag_mp_cartao or pag_mp_boleto:
+        pag_html += linha("Mercado Pago", sim_nao(1))
+    if pag_pags_cartao:
+        pag_html += linha("PagSeguro", sim_nao(1))
+    if pag_externo:
+        pag_html += linha("Pagamento externo", sim_nao(1))
+    if not pag_html:
+        pag_html = linha("Nenhum pagamento ativo", sim_nao(0))
+
+    # Monta seção de fretes
+    frete_html = ""
+    if env_ativo:
+        frs = []
+        if pac_ativo: frs.append("PAC")
+        if sdx_ativo: frs.append("SEDEX")
+        if jdl_ativo: frs.append("Jadlog")
+        if zum_ativo: frs.append("Zum")
+        frete_html += linha("Enviali", tag_val(", ".join(frs) if frs else "Ativo"))
+    if melhor_envio: frete_html += linha("Melhor Envio", sim_nao(1))
+    if frenet:       frete_html += linha("Frenet", sim_nao(1))
+    if pac_ativo and not env_ativo: frete_html += linha("Correios PAC", sim_nao(1))
+    if sdx_ativo and not env_ativo: frete_html += linha("Correios SEDEX", sim_nao(1))
+    if motoboy:      frete_html += linha("Motoboy", sim_nao(1))
+    if retirada:     frete_html += linha("Retirada pessoal", sim_nao(1))
+    if not frete_html:
+        frete_html = linha("Nenhum frete ativo", sim_nao(0))
 
     html_t1 = (
         '<div class="torre">'
-        '<div class="torre-titulo" style="color:#0D4F4A;border-color:#D1FAF6">🏪 Configuração da loja</div>'
+        '<div class="torre-titulo" style="color:#0D4F4A;border-color:#D1FAF6">Configuração da loja</div>'
         '<div style="font-size:11px;font-weight:600;color:#9DBDBB;text-transform:uppercase;letter-spacing:.06em;margin:8px 0 4px">Onboarding</div>'
         + linha("Wizard passo 1", sim_nao(w1))
         + linha("Wizard passo 2", sim_nao(w2))
@@ -680,18 +767,24 @@ with col_t1:
         + linha("Produto cadastrado", sim_nao(tem_prod))
         + linha("Pagamento configurado", sim_nao(tem_pag))
         + linha("Frete configurado", sim_nao(tem_log))
-        + '<div style="font-size:11px;font-weight:600;color:#9DBDBB;text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px">Fretes Enviali</div>'
-        + linha("Enviali ativo", sim_nao(env_ativo))
-        + linha("PAC", sim_nao(pac_ativo))
-        + linha("SEDEX", sim_nao(sdx_ativo))
-        + linha("Jadlog", sim_nao(jdl_ativo))
-        + linha("Zum/Loggi", sim_nao(zum_ativo))
+        + '<div style="font-size:11px;font-weight:600;color:#9DBDBB;text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px">Formas de pagamento</div>'
+        + pag_html
+        + '<div style="font-size:11px;font-weight:600;color:#9DBDBB;text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px">Fretes configurados</div>'
+        + frete_html
         + '<div style="font-size:11px;font-weight:600;color:#9DBDBB;text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px">Comportamento</div>'
-        + linha("Produtos cadastrados", tag_val(produtos) if produtos is not None else '<span style="color:#9DBDBB;font-size:12px">Não disponível</span>')
+        + linha("Produtos cadastrados", tag_val(produtos) if produtos is not None else "<span style=\'color:#9DBDBB;font-size:12px\'>Nao disponivel</span>")
         + linha("Visitas (30d)", tag_val(visitas_30d))
-        + linha("1ª visita", sim_nao(tem_vis))
-        + linha("1ª venda", sim_nao(tem_venda))
-        + '</div>'
+        + linha("1a visita", sim_nao(tem_vis))
+        + linha("1a venda", sim_nao(tem_venda))
+        + (
+            '<div style="font-size:11px;font-weight:600;color:#9DBDBB;text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px">Marketplace</div>'
+            + linha("Magalu configurado", sim_nao(magalu_config))
+            + linha("Produto enviado Magalu", sim_nao(magalu_venda))
+            + linha("GMV Magalu (30d)", tag_val(f"R${gmv_magalu:,.2f}") if gmv_magalu > 0 else tag_val("—"))
+            + linha("Pedidos Magalu (30d)", tag_val(ped_magalu) if ped_magalu > 0 else tag_val("—"))
+            if magalu_config else ""
+        )
+        + "</div>"
     )
     st.markdown(html_t1, unsafe_allow_html=True)
 
