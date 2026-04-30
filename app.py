@@ -11,6 +11,34 @@ try:
 except:
     ENGINE_OK = False
 
+import json, os
+from datetime import datetime as _dtnow
+
+LOG_FILE = "uso_liwatch.json"
+
+def registrar_uso(loja_id, nome_loja, status, score):
+    try:
+        log = []
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE, "r") as f:
+                log = json.load(f)
+        log.append({"ts": _dtnow.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "loja_id": loja_id, "nome": nome_loja,
+                    "status": status, "score": score})
+        with open(LOG_FILE, "w") as f:
+            json.dump(log[-500:], f)
+    except:
+        pass
+
+def ler_metricas_uso():
+    try:
+        if not os.path.exists(LOG_FILE):
+            return []
+        with open(LOG_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="LI Watch · Loja Integrada",
@@ -295,12 +323,21 @@ st.markdown(f"""
 
 # ── BUSCA ─────────────────────────────────────────────────────────────────────
 
-col_b, col_btn = st.columns([5,1])
+col_b, col_btn, col_help = st.columns([4.5, 1, 0.7])
 with col_b:
     termo = st.text_input("", placeholder="🔍  Digite o ID da loja ou nome — Ex: 123456 ou Virtual Make",
         label_visibility="collapsed")
 with col_btn:
     st.button("Buscar", use_container_width=True)
+with col_help:
+    with st.popover("?"):
+        st.markdown("**Como usar o LI Watch**")
+        st.markdown("**Buscar:** ID numerico ou nome parcial da loja.")
+        st.markdown("**Score de risco:** 70+ critico (hoje), 45 alto (24h), 25 medio (48h), abaixo baixo.")
+        st.markdown("**Torre 1:** Configuracoes da loja — wizard, produto, pagamento, frete, Enviali.")
+        st.markdown("**Torre 2:** Metricas — pedidos, GMV, etiquetas Enviali, benchmark do segmento.")
+        st.markdown("**E-mail pronto:** Aparece quando ha intervencao. Copie e envie para o lojista.")
+        st.markdown("**Download Excel:** Exporta o diagnostico completo.")
 
 if not termo.strip():
     st.markdown("""
@@ -552,6 +589,7 @@ else:
 score      = diag["score_risco"]
 prioridade = diag["prioridade"]
 status     = str(loja.get("status_loja","")).upper()
+registrar_uso(loja.get("loja_id"), loja.get("nome_loja"), status, score)
 
 # Cores
 if score >= 70:   cor="#E24B4A"; bg="#FEF2F2"; bd="#FCA5A5"
@@ -716,9 +754,38 @@ with col_t2:
     )
     st.markdown(html_t2, unsafe_allow_html=True)
 
+# ── OPORTUNIDADES DE PRODUTO NATIVO ──────────────────────────────────────────
+
+_ops = []
+if not env_ativo and tem_log:
+    _ops.append(("Enviali nao ativado",
+        "Loja com frete configurado mas sem Enviali. Ativar reduz custo e aumenta opcoes de entrega.",
+        "#FFFBEB","#FDE68A","#92400E"))
+_gmv_c = float(loja.get("vlr_gmv_ultimos_30d") or 0)
+_plano_c = str(loja.get("status_plano","")).upper()
+if _plano_c == "GRATIS" and not tem_pag:
+    _ops.append(("Pagali nao configurado",
+        "Plano gratis sem pagamento. Ativar o Pagali e o passo critico para a primeira venda.",
+        "#F0F9FF","#BAE6FD","#0369A1"))
+if _plano_c == "GRATIS" and _gmv_c > 1000:
+    _ops.append((f"Upgrade — R${_gmv_c:,.0f} GMV no plano gratis",
+        "Loja gerando receita no plano gratis. Upgrade desbloquearia mais produtos e visitas.",
+        "#F0FDF4","#86EFAC","#166534"))
+
+if _ops:
+    st.markdown("<div style='font-size:14px;font-weight:600;color:#1A2E2B;margin:.8rem 0 .4rem'>Oportunidades de produto nativo</div>", unsafe_allow_html=True)
+    _cols_op = st.columns(len(_ops))
+    for _i, (_t, _d, _bg, _bd, _tc) in enumerate(_ops):
+        with _cols_op[_i]:
+            st.markdown(
+                "<div style='background:" + _bg + ";border:1px solid " + _bd + ";border-left:4px solid " + _bd + ";border-radius:10px;padding:1rem'>"
+                "<div style='font-size:13px;font-weight:700;color:" + _tc + ";margin-bottom:6px'>" + _t + "</div>"
+                "<div style='font-size:12px;color:#5A7A78;line-height:1.6'>" + _d + "</div></div>",
+                unsafe_allow_html=True)
+
 # ── DIAGNÓSTICO + INSIGHTS ────────────────────────────────────────────────────
 
-st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
 
 col_d1, col_d2 = st.columns(2)
 
@@ -819,10 +886,13 @@ with col_dl:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True)
 with col_ts:
-    st.markdown(f"""
-    <div style='background:#F2EDE4;border-radius:10px;padding:.8rem;
-                font-size:12px;color:#5A7A78;text-align:center'>
-        {datetime.now().strftime('%d/%m/%Y às %H:%M')} &nbsp;·&nbsp;
-        <strong style='color:#1A2E2B'>{loja.get("nome_loja","—")}</strong>
-        &nbsp;·&nbsp; Score {score}/100
-    </div>""", unsafe_allow_html=True)
+    _n_diag = len(ler_metricas_uso())
+    _ts = datetime.now().strftime("%d/%m/%Y as %H:%M")
+    _nm = str(loja.get("nome_loja","—"))
+    st.markdown(
+        "<div style='background:#F2EDE4;border-radius:10px;padding:.8rem;font-size:12px;color:#5A7A78;text-align:center'>"
+        + _ts + " &nbsp;·&nbsp; <strong style='color:#1A2E2B'>" + _nm + "</strong>"
+        + " &nbsp;·&nbsp; Score " + str(score) + "/100"
+        + "<br><span style='font-size:11px;color:#9DBDBB'>" + str(_n_diag) + " diagnostico(s) realizados com o LI Watch</span>"
+        + "</div>",
+        unsafe_allow_html=True)
