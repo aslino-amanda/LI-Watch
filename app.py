@@ -479,9 +479,12 @@ with col_t1:
     tem_venda= loja.get("data_primeira_venda") not in (None,"","None")
 
     # Wizard steps do onboarding
-    w1 = int(onb.get("flag_wizard_1") or 0)
-    w2 = int(onb.get("flag_wizard_2") or 0)
-    w3 = int(onb.get("flag_wizard_3") or 0)
+    # Se loja está ativa (tem produto, pagamento e frete), wizard é completo
+    loja_configurada = tem_prod and tem_pag and tem_log
+    w1 = int(onb.get("flag_wizard_1") or (1 if loja_configurada else 0))
+    w2 = int(onb.get("flag_wizard_2") or (1 if loja_configurada else 0))
+    w3_raw = onb.get("flag_wizard_3")
+    w3 = int(w3_raw) if w3_raw is not None and str(w3_raw) not in ("None","nan","") else (1 if loja_configurada else 0)
 
     # Enviali
     env_ativo  = int(env.get("flag_ativacao_enviali") or 0)
@@ -493,7 +496,8 @@ with col_t1:
     gmv_30d    = float(loja.get("vlr_gmv_ultimos_30d") or 0)
     pedidos_30d= int(loja.get("qtd_pedido_ultimos_30d") or 0)
     visitas_30d= int(loja.get("qtde_visitas_ultimos_30d") or 0)
-    produtos   = int(onb.get("produtos") or 0)
+    _prod_raw = onb.get("produtos")
+    produtos  = int(_prod_raw) if _prod_raw is not None and str(_prod_raw) not in ("None","nan","0","") else None
 
     html_t1 = (
         '<div class="torre">'
@@ -512,7 +516,7 @@ with col_t1:
         + linha("Jadlog", sim_nao(jdl_ativo))
         + linha("Zum/Loggi", sim_nao(zum_ativo))
         + '<div style="font-size:11px;font-weight:600;color:#9DBDBB;text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px">Comportamento</div>'
-        + linha("Produtos cadastrados", tag_val(produtos))
+        + linha("Produtos cadastrados", tag_val(produtos) if produtos is not None else '<span style="color:#9DBDBB;font-size:12px">Não disponível</span>')
         + linha("Visitas (30d)", tag_val(visitas_30d))
         + linha("1ª visita", sim_nao(tem_vis))
         + linha("1ª venda", sim_nao(tem_venda))
@@ -558,13 +562,19 @@ with col_t2:
         + linha("GMV total (onboarding)", tag_val(gmv_onb_str))
         + linha("Origem 1ª venda", tag_val(orig_venda))
         + '<div style="font-size:11px;font-weight:600;color:#9DBDBB;text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px">Etiquetas Enviali</div>'
-        + linha("Compradas (total)", tag_val(etiq_comp))
-        + linha("Postadas", tag_val(etiq_post))
-        + linha("Canceladas", tag_val(etiq_canc))
-        + linha("PAC compradas", tag_val(etiq_pac))
-        + linha("SEDEX compradas", tag_val(etiq_sdx))
-        + linha("Jadlog compradas", tag_val(etiq_jdl))
-        + linha("Pedidos cotados", tag_val(ped_cot))
+        + (
+            '<div style="font-size:12px;color:#9DBDBB;padding:6px 0;font-style:italic">Loja não utiliza Enviali</div>'
+            if not env_ativo and etiq_comp == 0 and ped_cot == 0
+            else (
+                linha("Compradas (total)", tag_val(etiq_comp))
+                + linha("Postadas", tag_val(etiq_post))
+                + linha("Canceladas", tag_val(etiq_canc))
+                + linha("PAC compradas", tag_val(etiq_pac))
+                + linha("SEDEX compradas", tag_val(etiq_sdx))
+                + linha("Jadlog compradas", tag_val(etiq_jdl))
+                + linha("Pedidos cotados", tag_val(ped_cot))
+            )
+        )
         + f'<div style="font-size:11px;font-weight:600;color:#9DBDBB;text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px">Benchmark — {seg_bench}</div>'
         + linha("Avg dias para 1ª venda", tag_val(f"{avg_dias} dias"))
         + linha("Taxa de conversão", tag_val(f"{taxa}%"))
