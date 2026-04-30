@@ -643,6 +643,38 @@ with col_d2:
             </div>
         </div>""", unsafe_allow_html=True)
 
+
+# ── ROADMAP ───────────────────────────────────────────────────────────────────
+
+st.divider()
+with st.expander("Roadmap — próximos passos do LI Watch", expanded=False):
+    col_r1, col_r2, col_r3 = st.columns(3)
+    with col_r1:
+        st.markdown("""<div style='background:#F0FDF4;border:1px solid #86EFAC;border-radius:12px;padding:1.2rem'>
+<div style='font-size:11px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px'>FASE 1 — CONCLUÍDA</div>
+<div style='font-size:14px;font-weight:700;color:#1A2E2B;margin-bottom:8px'>Diagnóstico Individual</div>
+<div style='font-size:12px;color:#5A7A78;line-height:1.7'>
+✓ Busca por ID ou nome<br>✓ Torres configuração + métricas<br>✓ Score de risco com dados reais<br>✓ Benchmark por segmento<br>✓ Conexão Metabase ao vivo<br>✓ Download em Excel
+</div></div>""", unsafe_allow_html=True)
+    with col_r2:
+        st.markdown("""<div style='background:#FFFBEB;border:1px solid #FDE68A;border-radius:12px;padding:1.2rem'>
+<div style='font-size:11px;font-weight:700;color:#92400E;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px'>FASE 2 — EM CONSTRUÇÃO</div>
+<div style='font-size:14px;font-weight:700;color:#1A2E2B;margin-bottom:8px'>Automação de Intervenção</div>
+<div style='font-size:12px;color:#5A7A78;line-height:1.7'>
+⏳ Pipeline automático diário (8h)<br>⏳ Integração HubSpot<br>⏳ Disparo de e-mail por gargalo<br>⏳ Log de intervenções<br>⏳ Filtro anti-spam (3 dias)<br>⏳ Métricas de impacto pós-envio
+</div></div>""", unsafe_allow_html=True)
+    with col_r3:
+        st.markdown("""<div style='background:#EEEDFE;border:1px solid #C4B5FD;border-radius:12px;padding:1.2rem'>
+<div style='font-size:11px;font-weight:700;color:#3C3489;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px'>FASE 3 — VISÃO</div>
+<div style='font-size:14px;font-weight:700;color:#1A2E2B;margin-bottom:8px'>IA Generativa</div>
+<div style='font-size:12px;color:#5A7A78;line-height:1.7'>
+💡 LLM analisa contexto da loja<br>💡 Diagnóstico em linguagem natural<br>💡 E-mail gerado por IA por lojista<br>💡 Detecção de padrões de churn<br>💡 Recomendações proativas<br>💡 Chat com dados do lojista
+</div></div>""", unsafe_allow_html=True)
+    st.markdown("""<div style='background:#0D4F4A;border-radius:10px;padding:1rem 1.2rem;margin-top:1rem;font-size:13px;color:#9DCFCC;line-height:1.6'>
+<strong style='color:#D4F53C'>North Star 2026:</strong> % de novos lojistas com 5 pedidos em até 15 dias.
+O LI Watch é a ferramenta que viabiliza essa meta — do diagnóstico individual à automação em escala, sem dependência técnica do CS.
+</div>""", unsafe_allow_html=True)
+
 # ── DOWNLOAD ──────────────────────────────────────────────────────────────────
 
 st.divider()
