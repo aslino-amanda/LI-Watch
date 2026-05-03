@@ -620,6 +620,43 @@ prioridade = diag["prioridade"]
 status     = str(loja.get("status_loja","")).upper()
 registrar_uso(loja.get("loja_id"), loja.get("nome_loja"), status, score)
 
+# ── DETECÇÃO AUTOMÁTICA DE PERFIL ─────────────────────────────────────────────
+from datetime import date as _date, datetime as _dtcheck
+def _dias_loja(d):
+    if not d or str(d) in ("None","nan",""): return 999
+    try: return (_date.today() - _dtcheck.strptime(str(d)[:10],"%Y-%m-%d").date()).days
+    except: return 999
+
+dias_desde_cadastro = _dias_loja(loja.get("data_cadastro_loja"))
+gmv_30d_check = float(loja.get("vlr_gmv_ultimos_30d") or 0)
+pedidos_30d_check = int(loja.get("qtd_pedido_ultimos_30d") or 0)
+
+# Perfil: NOVO (<90 dias) ou CASA (>=90 dias)
+if dias_desde_cadastro < 90:
+    perfil_loja = "NOVO"
+    perfil_label = "Novo lojista"
+    perfil_desc = f"Cadastrado ha {dias_desde_cadastro} dias — foco em ativacao"
+    perfil_cor = "#1ABCB0"
+    perfil_bg = "#D1FAF6"
+elif gmv_30d_check > 0 or pedidos_30d_check > 0:
+    perfil_loja = "CASA_ATIVO"
+    perfil_label = "Cliente da casa — ativo"
+    perfil_desc = f"{pedidos_30d_check} pedidos e R${gmv_30d_check:,.0f} GMV nos ultimos 30 dias"
+    perfil_cor = "#22C55E"
+    perfil_bg = "#F0FDF4"
+elif status == "SEM VENDAS RECENTES":
+    perfil_loja = "CASA_RISCO"
+    perfil_label = "Cliente da casa — em risco"
+    perfil_desc = f"Loja estabelecida ({dias_desde_cadastro} dias) com queda de faturamento"
+    perfil_cor = "#F59E0B"
+    perfil_bg = "#FFFBEB"
+else:
+    perfil_loja = "CASA_INATIVO"
+    perfil_label = "Cliente da casa — inativo"
+    perfil_desc = f"Loja com {dias_desde_cadastro} dias sem vendas recentes"
+    perfil_cor = "#E24B4A"
+    perfil_bg = "#FEF2F2"
+
 # Cores
 if score >= 70:   cor="#E24B4A"; bg="#FEF2F2"; bd="#FCA5A5"
 elif score >= 45: cor="#F59E0B"; bg="#FFFBEB"; bd="#FDE68A"
@@ -641,20 +678,36 @@ col_nome, col_score = st.columns([4,1])
 
 with col_nome:
     mrr = loja.get("vlr_plano_mrr_atual") or 0
-    st.markdown(f"""
-    <div style='background:white;border-radius:14px;padding:1.2rem;margin-bottom:1rem'>
-        <div style='font-size:20px;font-weight:700;color:#1A2E2B'>{loja.get("nome_loja","—")}</div>
-        <div style='font-size:13px;color:#5A7A78;margin-top:4px'>
-            ID: <strong>{loja.get("loja_id","—")}</strong> &nbsp;·&nbsp;
-            {loja.get("segmento_loja","—")} &nbsp;·&nbsp;
-            {loja.get("cidade","—")}/{loja.get("estado","—")} &nbsp;·&nbsp;
-            Plano: <strong>{loja.get("status_plano","—")} {("— R$"+str(mrr)+"/mês") if float(mrr or 0)>0 else ""}</strong> &nbsp;·&nbsp;
-            Origem: <strong>{loja.get("origem","—")}</strong>
-        </div>
-        <div style='font-size:13px;color:#5A7A78;margin-top:2px'>
-            📧 {loja.get("email_loja","—")} &nbsp;·&nbsp; 🌐 {loja.get("dominio_loja","—")}
-        </div>
-    </div>""", unsafe_allow_html=True)
+    _mrr_str = f"— R${mrr}/mes" if float(mrr or 0) > 0 else ""
+    _nome    = str(loja.get("nome_loja","—"))
+    _loja_id = str(loja.get("loja_id","—"))
+    _seg     = str(loja.get("segmento_loja","—"))
+    _cid     = str(loja.get("cidade","—"))
+    _est     = str(loja.get("estado","—"))
+    _plano   = str(loja.get("status_plano","—"))
+    _orig    = str(loja.get("origem","—"))
+    _email   = str(loja.get("email_loja","—"))
+    _dom     = str(loja.get("dominio_loja","—"))
+    st.markdown(
+        "<div style='background:white;border-radius:14px;padding:1.2rem;margin-bottom:1rem'>"
+        "<div style='display:flex;align-items:center;gap:10px;margin-bottom:4px'>"
+        "<span style='font-size:20px;font-weight:700;color:#1A2E2B'>" + _nome + "</span>"
+        "<span style='background:" + perfil_bg + ";color:" + perfil_cor + ";font-size:11px;"
+        "font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap'>"
+        + perfil_label + "</span>"
+        "</div>"
+        "<div style='font-size:12px;color:" + perfil_cor + ";margin-bottom:6px'>" + perfil_desc + "</div>"
+        "<div style='font-size:13px;color:#5A7A78'>"
+        "ID: <strong>" + _loja_id + "</strong> &nbsp;·&nbsp; " + _seg +
+        " &nbsp;·&nbsp; " + _cid + "/" + _est +
+        " &nbsp;·&nbsp; Plano: <strong>" + _plano + " " + _mrr_str + "</strong>"
+        " &nbsp;·&nbsp; Origem: <strong>" + _orig + "</strong>"
+        "</div>"
+        "<div style='font-size:13px;color:#5A7A78;margin-top:2px'>"
+        + _email + " &nbsp;·&nbsp; " + _dom +
+        "</div></div>",
+        unsafe_allow_html=True
+    )
 
 with col_score:
     st.markdown(f"""
@@ -685,9 +738,16 @@ with col_t1:
     w3_raw = onb.get("flag_wizard_3")
     w3 = int(w3_raw) if w3_raw is not None and str(w3_raw) not in ("None","nan","") else (1 if loja_configurada else 0)
 
-    # Produtos — usa wizard_produto da mv_loja diretamente
-    _prod_raw = loja.get("wizard_produto") or onb.get("produtos")
-    produtos  = int(float(_prod_raw)) if _prod_raw is not None and str(_prod_raw) not in ("None","nan","0","") else None
+    # Produtos — tenta wizard_produto da mv_loja, depois onboarding
+    _prod_raw = loja.get("wizard_produto")
+    if _prod_raw is None or str(_prod_raw) in ("None","nan",""):
+        _prod_raw = onb.get("produtos")
+    try:
+        produtos = int(float(_prod_raw)) if _prod_raw is not None and str(_prod_raw) not in ("None","nan","") else None
+        if produtos == 0:
+            produtos = None  # 0 significa sem dado, não zero produtos
+    except:
+        produtos = None
 
     # Fretes — usa mv_loja diretamente (mais completo)
     def _flag(campo): return int(loja.get(campo) or env.get(campo.replace("flag_ativo_","flag_ativacao_").replace("enviali_correios_","").replace("enviali_","")) or 0)
@@ -846,6 +906,21 @@ with col_t2:
         + '</div>'
     )
     st.markdown(html_t2, unsafe_allow_html=True)
+
+# ── DIAGNÓSTICO ESPECÍFICO POR PERFIL ────────────────────────────────────────
+
+if perfil_loja in ("CASA_RISCO", "CASA_INATIVO"):
+    st.markdown(
+        "<div style='background:#0D4F4A;border-radius:12px;padding:1rem 1.2rem;margin-bottom:.8rem'>"
+        "<div style='font-size:11px;color:#1ABCB0;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px'>Cliente da casa — diagnostico de queda</div>"
+        "<div style='font-size:13px;color:#D1FAF6;line-height:1.6'>"
+        "Esta loja tem historico de vendas mas esta em queda ou inativa. "
+        "Para um diagnostico completo de causa raiz (ticket, recorrencia, cupons, mix de pagamento), "
+        "use as queries de diagnostico de queda com o conta_id: <strong style='color:#D4F53C'>"
+        + str(loja.get("loja_id","—")) + "</strong>"
+        "</div></div>",
+        unsafe_allow_html=True
+    )
 
 # ── OPORTUNIDADES DE PRODUTO NATIVO ──────────────────────────────────────────
 
