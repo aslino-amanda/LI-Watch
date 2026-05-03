@@ -443,15 +443,20 @@ else:
 
         # Calcula score inline para cada loja
         def _score_rapido(row):
-            s = row.get("status_loja","")
-            d = int(row.get("dias_cadastro") or 0)
-            v = int(row.get("qtde_visitas_ultimos_30d") or 0)
+            try: s = str(row["status_loja"]) if row["status_loja"] is not None else ""
+            except: s = ""
+            try: d = int(float(row["dias_cadastro"])) if row["dias_cadastro"] is not None else 0
+            except: d = 0
+            try: v = int(float(row["qtde_visitas_ultimos_30d"])) if row["qtde_visitas_ultimos_30d"] is not None else 0
+            except: v = 0
+            try: p = str(row["status_plano"]) if row["status_plano"] is not None else ""
+            except: p = ""
             score = 0
             if s == "ONBOARDING INCOMPLETO": score = 70 if d >= 7 else 50
-            elif s == "NUNCA VENDEU":        score = 45 if d >= 20 else 25
+            elif s == "NUNCA VENDEU": score = 45 if d >= 20 else 25
             elif s == "SEM VENDAS RECENTES": score = 55
             if v >= 50 and s == "NUNCA VENDEU": score += 15
-            if str(row.get("status_plano","")).upper() == "PAGO": score += 10
+            if p.upper() == "PAGO": score += 10
             return min(100, score)
 
         df_fil["score"] = df_fil.apply(_score_rapido, axis=1)
