@@ -451,19 +451,22 @@ if not termo.strip():
                 if f_st != "Todos": df_f = df_f[df_f["status_loja"]==f_st]
                 if f_pl != "Todos": df_f = df_f[df_f["status_plano"]==f_pl]
                 if f_sg != "Todos": df_f = df_f[df_f["segmento_loja"]==f_sg]
-                def _sc(r):
-                    s=r.get("status_loja",""); d=int(r.get("dias_cadastro") or 0)
-                    v=int(r.get("qtde_visitas_ultimos_30d") or 0); sc=0
-                    if s=="ONBOARDING INCOMPLETO": sc=70 if d>=7 else 50
-                    elif s=="NUNCA VENDEU": sc=45 if d>=20 else 25
-                    elif s=="SEM VENDAS RECENTES": sc=55
-                    if v>=50 and s=="NUNCA VENDEU": sc+=15
-                    if str(r.get("status_plano","")).upper()=="PAGO": sc+=10
-                    return min(100,sc)
-                df_f["score"] = df_f.apply(_sc, axis=1)
-                df_f["prio"]  = df_f["score"].apply(lambda x: "Critico" if x>=70 else "Alto" if x>=45 else "Medio" if x>=25 else "Baixo")
+                # Score vetorizado — sem apply, sem NaN
+                import numpy as np
+                df_f["dias_cadastro"] = pd.to_numeric(df_f["dias_cadastro"], errors="coerce").fillna(0).astype(int)
+                df_f["status_loja"]   = df_f["status_loja"].fillna("").astype(str)
+                df_f["status_plano"]  = df_f["status_plano"].fillna("").astype(str)
+                _s = df_f["status_loja"]
+                _d = df_f["dias_cadastro"]
+                _p = df_f["status_plano"].str.upper()
+                _score = np.where(_s=="ONBOARDING INCOMPLETO", np.where(_d>=7,70,50),
+                         np.where(_s=="NUNCA VENDEU", np.where(_d>=20,45,25),
+                         np.where(_s=="SEM VENDAS RECENTES", 55, 5)))
+                _score = np.where(_p=="PAGO", np.minimum(_score+10,100), _score)
+                df_f["score"] = _score.astype(int)
+                df_f["prio"]  = pd.cut(df_f["score"], bins=[-1,24,44,69,100], labels=["Baixo","Medio","Alto","Critico"])
                 df_f = df_f.sort_values("score", ascending=False)
-                _cs = ["loja_id","nome_loja","segmento_loja","status_loja","score","prio","dias_cadastro","qtde_visitas_ultimos_30d_clean","vlr_gmv_ultimos_30d_clean","status_plano"]
+                _cs = ["loja_id","nome_loja","segmento_loja","status_loja","score","prio","dias_cadastro","status_plano"]
                 _ce = [c for c in _cs if c in df_f.columns]
                 st.dataframe(df_f[_ce].rename(columns={
                     "loja_id":"ID","nome_loja":"Loja","segmento_loja":"Segmento",
