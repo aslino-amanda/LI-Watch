@@ -284,7 +284,10 @@ def buscar_base_monitoramento():
             WHEN coalesce(vlr_gmv_ultimos_30d,0) = 0   THEN 'SEM VENDAS RECENTES'
             ELSE 'LOJA ATIVA'
         END AS status_loja,
-        datediff(current_date, data_cadastro_loja) AS dias_cadastro
+        coalesce(datediff(current_date, data_cadastro_loja), 0) AS dias_cadastro,
+        coalesce(qtde_visitas_ultimos_30d, 0)                     AS qtde_visitas_ultimos_30d_clean,
+        coalesce(vlr_gmv_ultimos_30d, 0)                          AS vlr_gmv_ultimos_30d_clean,
+        coalesce(qtd_pedido_ultimos_30d, 0)                       AS qtd_pedido_ultimos_30d_clean
     FROM analytics_manual.mv_loja
     WHERE situacao_loja = 'ativa'
       AND data_cadastro_loja >= current_date - interval '60' day
@@ -460,13 +463,13 @@ if not termo.strip():
                 df_f["score"] = df_f.apply(_sc, axis=1)
                 df_f["prio"]  = df_f["score"].apply(lambda x: "Critico" if x>=70 else "Alto" if x>=45 else "Medio" if x>=25 else "Baixo")
                 df_f = df_f.sort_values("score", ascending=False)
-                _cs = ["loja_id","nome_loja","segmento_loja","status_loja","score","prio","dias_cadastro","qtde_visitas_ultimos_30d","vlr_gmv_ultimos_30d","status_plano"]
+                _cs = ["loja_id","nome_loja","segmento_loja","status_loja","score","prio","dias_cadastro","qtde_visitas_ultimos_30d_clean","vlr_gmv_ultimos_30d_clean","status_plano"]
                 _ce = [c for c in _cs if c in df_f.columns]
                 st.dataframe(df_f[_ce].rename(columns={
                     "loja_id":"ID","nome_loja":"Loja","segmento_loja":"Segmento",
                     "status_loja":"Status","score":"Score","prio":"Prioridade",
-                    "dias_cadastro":"Dias","qtde_visitas_ultimos_30d":"Visitas 30d",
-                    "vlr_gmv_ultimos_30d":"GMV 30d","status_plano":"Plano"
+                    "dias_cadastro":"Dias","qtde_visitas_ultimos_30d_clean":"Visitas 30d",
+                    "vlr_gmv_ultimos_30d_clean":"GMV 30d","status_plano":"Plano"
                 }), use_container_width=True, hide_index=True)
                 st.caption(f"{len(df_f)} lojas · Pesquise o ID acima para ver o diagnostico completo")
                 st.download_button("Exportar CSV",
