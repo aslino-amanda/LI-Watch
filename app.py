@@ -1063,7 +1063,7 @@ col_d1, col_d2 = st.columns(2)
 
 with col_d1:
     causa = diag.get("causa_raiz","—")
-    acao  = diag.get("acoes",["—"])[0]
+    _acoes = diag.get("acoes", []); acao = _acoes[0] if _acoes else "—"
     insights = diag.get("insights",[])
     insights_html = "".join([f'<div class="insight-item">→ {i}</div>' for i in insights]) if insights else '<div class="insight-item" style="color:#9DBDBB">Sem insights adicionais</div>'
 
