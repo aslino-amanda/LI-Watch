@@ -156,6 +156,7 @@ def buscar_lojas_para_intervencao():
         "native": {"query": sql}
     }
 
+    import time
     r = requests.post(
         f"{METABASE_URL}/api/dataset",
         headers=HEADERS_MB,
@@ -163,10 +164,31 @@ def buscar_lojas_para_intervencao():
         timeout=120
     )
 
-    if r.status_code != 200:
+    # Metabase 202 = query assíncrona, faz polling
+    if r.status_code == 202:
+        data = r.json()
+        job_id = data.get("id")
+        if not job_id:
+            raise Exception(f"Metabase 202 sem job_id: {r.text[:200]}")
+        for _ in range(30):
+            time.sleep(2)
+            poll = requests.get(
+                f"{METABASE_URL}/api/dataset/{job_id}",
+                headers=HEADERS_MB,
+                timeout=30,
+            )
+            if poll.status_code == 200:
+                data = poll.json()
+                break
+            if poll.status_code != 202:
+                raise Exception(f"Polling falhou {poll.status_code}: {poll.text[:200]}")
+        else:
+            raise Exception("Timeout: Metabase nao respondeu em 60s")
+    elif r.status_code != 200:
         raise Exception(f"Erro Metabase {r.status_code}: {r.text[:200]}")
+    else:
+        data = r.json()
 
-    data = r.json()
     if "error" in data:
         raise Exception(data["error"])
 
