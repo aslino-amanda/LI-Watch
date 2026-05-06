@@ -162,7 +162,7 @@ def buscar_dados_loja(loja_id: int):
     sql_loja = f"""
     SELECT
         loja_id,
-        upper(nome_loja)            AS nome_loja,
+        COALESCE(upper(nome_loja), upper(dominio_loja), CAST(loja_id AS CHAR)) AS nome_loja,
         dominio_loja,
         email_loja,
         upper(segmento_loja)        AS segmento_loja,
@@ -260,7 +260,7 @@ def buscar_base_monitoramento():
     sql = """
     SELECT
         loja_id,
-        upper(nome_loja)            AS nome_loja,
+        COALESCE(upper(nome_loja), upper(dominio_loja), CAST(loja_id AS CHAR)) AS nome_loja,
         upper(segmento_loja)        AS segmento_loja,
         upper(situacao_loja)        AS situacao_loja,
         data_cadastro_loja,
@@ -298,8 +298,9 @@ def buscar_base_monitoramento():
          OR data_primeira_venda            IS NULL
          OR coalesce(vlr_gmv_ultimos_30d,0) = 0
       )
-    ORDER BY dias_cadastro DESC
-    LIMIT 200
+    ORDER BY
+      CASE WHEN data_ini_plano_atual IS NOT NULL THEN 0 ELSE 1 END ASC,
+      dias_cadastro DESC
     """
     return rodar_sql(sql)
 
@@ -498,16 +499,43 @@ if not termo.strip():
                     c4.metric("⏰ Passaram janela (7d+)", n_janela)
                     st.divider()
 
+                    # Mês de entrada para filtro
+                    df_onb["mes_entrada"] = pd.to_datetime(
+                        df_onb["data_cadastro_loja"], errors="coerce"
+                    ).dt.strftime("%Y-%m").fillna("—")
+                    meses_disponiveis = sorted(df_onb["mes_entrada"].unique().tolist(), reverse=True)
+                    meses_disponiveis = [m for m in meses_disponiveis if m != "—"]
+
+                    # Nomes amigáveis para os meses
+                    _nomes_mes = {
+                        "01":"Janeiro","02":"Fevereiro","03":"Março","04":"Abril",
+                        "05":"Maio","06":"Junho","07":"Julho","08":"Agosto",
+                        "09":"Setembro","10":"Outubro","11":"Novembro","12":"Dezembro"
+                    }
+                    def _fmt_mes(m):
+                        try:
+                            ano, num = m.split("-")
+                            return f"{_nomes_mes.get(num, num)}/{ano}"
+                        except:
+                            return m
+
+                    meses_labels = {m: _fmt_mes(m) for m in meses_disponiveis}
+                    opcoes_mes   = ["Todos"] + [meses_labels[m] for m in meses_disponiveis]
+                    _label_to_val = {v: k for k, v in meses_labels.items()}
+
                     # Filtros
-                    cf1, cf2, cf3 = st.columns(3)
+                    cf1, cf2, cf3, cf4 = st.columns(4)
                     with cf1:
-                        f_gargalo = st.selectbox("Gargalo", ["Todos","🔴 Sem produto","🔴 Sem pagamento","🟡 Sem frete","🟠 Nunca vendeu"], key="f_gargalo")
+                        f_mes = st.selectbox("Mês de entrada", opcoes_mes, key="f_mes_onb")
                     with cf2:
-                        f_plano = st.selectbox("Plano", ["Todos","PAGO","GRATIS"], key="f_plano_onb")
+                        f_gargalo = st.selectbox("Gargalo", ["Todos","🔴 Sem produto","🔴 Sem pagamento","🟡 Sem frete","🟠 Nunca vendeu"], key="f_gargalo")
                     with cf3:
+                        f_plano = st.selectbox("Plano", ["Todos","PAGO","GRATIS"], key="f_plano_onb")
+                    with cf4:
                         f_janela = st.selectbox("Janela", ["Todos","🟢 Janela aberta","🕐 Janela crítica","⚠️ Janela vencida"], key="f_janela")
 
                     df_v = df_onb[df_onb["status_loja"] != "LOJA ATIVA"].copy()
+                    if f_mes     != "Todos": df_v = df_v[df_v["mes_entrada"] == _label_to_val.get(f_mes, f_mes)]
                     if f_gargalo != "Todos": df_v = df_v[df_v["gargalo"] == f_gargalo]
                     if f_plano   != "Todos": df_v = df_v[df_v["status_plano"].str.upper() == f_plano]
                     if f_janela  != "Todos": df_v = df_v[df_v["janela"] == f_janela]
