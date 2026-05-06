@@ -430,12 +430,119 @@ if not termo.strip():
             "<div style='font-size:13px;margin-top:8px;color:#9DBDBB'>Conecte ao Metabase para monitorar a base · Digite um ID para diagnosticar</div>"
             "</div>", unsafe_allow_html=True)
     else:
-        # ── TOP SELLERS EM RISCO ─────────────────────────────────────────────
-        if True:
+        import metabase_connector as mb
+        import datetime as _dt
+        import numpy as np
+
+        tab_onb, tab_churn = st.tabs(["🚀 Onboarding — Lojas novas", "🔥 Top Sellers em risco"])
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 1 — ONBOARDING
+        # ══════════════════════════════════════════════════════════════════════
+        with tab_onb:
+            st.caption("Lojas criadas nos últimos 60 dias · ordenadas por urgência · foco em travamentos críticos")
+            try:
+                with st.spinner("Carregando lojas em onboarding..."):
+                    df_onb = buscar_base_monitoramento()
+
+                if not df_onb.empty:
+                    # Score e prioridade vetorizados
+                    df_onb["dias_cadastro"] = pd.to_numeric(df_onb["dias_cadastro"], errors="coerce").fillna(0).astype(int)
+                    df_onb["status_loja"]   = df_onb["status_loja"].fillna("").astype(str)
+                    df_onb["status_plano"]  = df_onb["status_plano"].fillna("").astype(str)
+                    _s = df_onb["status_loja"]
+                    _d = df_onb["dias_cadastro"]
+                    _p = df_onb["status_plano"].str.upper()
+                    _score = np.where(_s=="ONBOARDING INCOMPLETO", np.where(_d>=7,70,50),
+                             np.where(_s=="NUNCA VENDEU", np.where(_d>=20,45,25),
+                             np.where(_s=="SEM VENDAS RECENTES", 55, 5)))
+                    _score = np.where(_p=="PAGO", np.minimum(_score+10,100), _score)
+                    df_onb["score"] = _score.astype(int)
+
+                    # Gargalo específico por loja
+                    def _gargalo(row):
+                        if row["status_loja"] == "LOJA ATIVA":
+                            return "✅ Ativa"
+                        if str(row.get("data_primeira_config_produto","")) in ("","None","nan","NaT"):
+                            return "🔴 Sem produto"
+                        if str(row.get("data_primeira_config_pagamento","")) in ("","None","nan","NaT"):
+                            return "🔴 Sem pagamento"
+                        if str(row.get("data_primeira_config_logistica","")) in ("","None","nan","NaT"):
+                            return "🟡 Sem frete"
+                        if str(row.get("data_primeira_venda","")) in ("","None","nan","NaT"):
+                            return "🟠 Nunca vendeu"
+                        return "✅ Configurada"
+
+                    df_onb["gargalo"] = df_onb.apply(_gargalo, axis=1)
+
+                    # Janela crítica
+                    def _janela(row):
+                        d = int(row["dias_cadastro"] or 0)
+                        if d >= 15: return "⚠️ Janela vencida"
+                        if d >= 7:  return "🕐 Janela crítica"
+                        return "🟢 Janela aberta"
+                    df_onb["janela"] = df_onb.apply(_janela, axis=1)
+
+                    df_onb = df_onb.sort_values("score", ascending=False)
+
+                    # Métricas
+                    n_total   = len(df_onb[df_onb["status_loja"] != "LOJA ATIVA"])
+                    n_critico = len(df_onb[df_onb["score"] >= 70])
+                    n_pago_travado = len(df_onb[(df_onb["status_plano"].str.upper()=="PAGO") & (df_onb["status_loja"]!="LOJA ATIVA")])
+                    n_janela  = len(df_onb[(df_onb["dias_cadastro"] >= 7) & (df_onb["status_loja"]!="LOJA ATIVA")])
+
+                    c1,c2,c3,c4 = st.columns(4)
+                    c1.metric("Lojas em onboarding", n_total)
+                    c2.metric("🔴 Score crítico (70+)", n_critico)
+                    c3.metric("💸 Pagos travados", n_pago_travado)
+                    c4.metric("⏰ Passaram janela (7d+)", n_janela)
+                    st.divider()
+
+                    # Filtros
+                    cf1, cf2, cf3 = st.columns(3)
+                    with cf1:
+                        f_gargalo = st.selectbox("Gargalo", ["Todos","🔴 Sem produto","🔴 Sem pagamento","🟡 Sem frete","🟠 Nunca vendeu"], key="f_gargalo")
+                    with cf2:
+                        f_plano = st.selectbox("Plano", ["Todos","PAGO","GRATIS"], key="f_plano_onb")
+                    with cf3:
+                        f_janela = st.selectbox("Janela", ["Todos","🟢 Janela aberta","🕐 Janela crítica","⚠️ Janela vencida"], key="f_janela")
+
+                    df_v = df_onb[df_onb["status_loja"] != "LOJA ATIVA"].copy()
+                    if f_gargalo != "Todos": df_v = df_v[df_v["gargalo"] == f_gargalo]
+                    if f_plano   != "Todos": df_v = df_v[df_v["status_plano"].str.upper() == f_plano]
+                    if f_janela  != "Todos": df_v = df_v[df_v["janela"] == f_janela]
+
+                    st.caption(f"{len(df_v)} loja(s) · clique no ID para diagnosticar individualmente")
+
+                    # Tabela
+                    _cols = ["loja_id","nome_loja","segmento_loja","status_plano","score","dias_cadastro","gargalo","janela"]
+                    _ce = [c for c in _cols if c in df_v.columns]
+                    st.dataframe(
+                        df_v[_ce].rename(columns={
+                            "loja_id":"ID","nome_loja":"Loja","segmento_loja":"Segmento",
+                            "status_plano":"Plano","score":"Score","dias_cadastro":"Dias",
+                            "gargalo":"Gargalo","janela":"Janela"
+                        }),
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
+                        }
+                    )
+
+                    st.download_button("Exportar CSV",
+                        data=df_v[_ce].to_csv(index=False).encode("utf-8"),
+                        file_name=f"onboarding_{_dt.date.today().strftime('%Y%m%d')}.csv",
+                        mime="text/csv")
+
+            except Exception as e:
+                st.warning(f"Erro ao carregar onboarding: {e}")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 2 — TOP SELLERS EM RISCO
+        # ══════════════════════════════════════════════════════════════════════
+        with tab_churn:
             st.caption("Top 100 lojas por GMV — comparando dias 1 até hoje vs média dos últimos 6 meses")
             try:
-                import metabase_connector as mb
-                import datetime as _dt
                 with st.spinner("Analisando top sellers..."):
                     df_top = mb.buscar_top_lojas(limite=100)
 
@@ -446,13 +553,12 @@ if not termo.strip():
                     pd.to_numeric(df_risco["vlr_gmv_projetado"], errors="coerce")
                 ).clip(lower=0).round(2)
 
-                n_risco = len(df_risco)
+                n_risco   = len(df_risco)
                 dia_atual = _dt.date.today().day
-
-                # Métricas resumidas
                 n_critico = len(df_top[df_top["var_projetado_pct"] <= -50])
                 n_atencao = len(df_top[(df_top["var_projetado_pct"] > -50) & (df_top["var_projetado_pct"] <= -20)])
                 n_ok      = len(df_top[df_top["var_projetado_pct"] > -20])
+
                 c1,c2,c3,c4 = st.columns(4)
                 c1.metric("Top sellers monitoradas", len(df_top))
                 c2.metric("🔴 Crítico (>50% queda)", n_critico)
@@ -465,15 +571,15 @@ if not termo.strip():
                     rows_ui = []
                     for _, r in df_risco.sort_values("var_projetado_pct").iterrows():
                         rows_ui.append({
-                            "ID":                    int(r["conta_id"]),
-                            "Loja":                  r["nome_loja"],
-                            "Segmento":              r.get("segmento","—"),
-                            "Tier":                  r.get("tier_loja","—"),
+                            "ID":                         int(r["conta_id"]),
+                            "Loja":                       r["nome_loja"],
+                            "Segmento":                   r.get("segmento","—"),
+                            "Tier":                       r.get("tier_loja","—"),
                             f"Média 6m (d1-{dia_atual})": f"R${float(r['vlr_gmv_media_2m'] or 0):,.0f}",
                             f"Mês atual (d1-{dia_atual})": f"R${float(r['vlr_gmv_mes_atual'] or 0):,.0f}",
-                            "Projetado":             f"R${float(r['vlr_gmv_projetado'] or 0):,.0f}",
-                            "Variação":              f"{float(r['var_projetado_pct']):.0f}%",
-                            "GMV em risco":          f"R${float(r['gmv_em_risco'] or 0):,.0f}",
+                            "Projetado":                  f"R${float(r['vlr_gmv_projetado'] or 0):,.0f}",
+                            "Variacao":                   f"{float(r['var_projetado_pct']):.0f}%",
+                            "GMV em risco":               f"R${float(r['gmv_em_risco'] or 0):,.0f}",
                         })
                     st.dataframe(pd.DataFrame(rows_ui), use_container_width=True, hide_index=True)
                     st.download_button("Exportar CSV",
