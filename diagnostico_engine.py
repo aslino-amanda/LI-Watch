@@ -300,7 +300,7 @@ def _diagnosticar_sem_vendas_recentes(loja: dict, bench: dict, dias_cadastro: in
         causas.append("Parada total — zero pedidos e zero GMV nos últimos 30 dias")
         insights.append(
             "Não é desaceleração — é parada completa. "
-            f"Apenas 0,4% das lojas ativas vendem e retêm clientes (GMV médio: R${RETENCAO['gmv_medio_30d']:,.2f}/mês). "
+            f"Apenas 0,4% das lojas ativas vendem e retêm clientes (GMV médio: R${RETENCAO['gmv_medio_retidos']:,.2f}/mês). "
             "Esta loja saiu desse grupo."
         )
     elif pedidos > 0 and gmv_30d == 0:
