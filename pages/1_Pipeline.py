@@ -430,7 +430,7 @@ diag_queda_map = {}
 
 with st.spinner("Identificando top sellers em risco (comparando mesmos dias dos últimos 6 meses)..."):
     try:
-        df_top = mb.buscar_top_lojas(limite=50)
+        df_top = mb.buscar_top_lojas(limite=100)
 
         # Para cada top seller, compara dias 1-hoje do mês atual vs média dos 6 meses anteriores
         top_sellers_em_risco = []
