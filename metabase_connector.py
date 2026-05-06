@@ -457,6 +457,41 @@ ORDER BY p.mes ASC
         "historico":    historico,
     }
 
+
+def buscar_historico_mensal_batch(conta_ids: list) -> dict:
+    """
+    Busca histórico mensal de GMV dos últimos 6 meses para uma lista de lojas.
+    Retorna dict: { conta_id -> lista de gmv por mês [mais antigo -> mais recente] }
+    """
+    if not conta_ids:
+        return {}
+    ids_str = ",".join(str(i) for i in conta_ids)
+    sql = f"""
+SELECT
+    A.conta_id,
+    DATE_FORMAT(
+        CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'),
+        '%Y-%m'
+    ) AS mes,
+    ROUND(SUM(A.pedido_venda_valor_total), 2) AS gmv
+FROM pedido_tb_pedido_venda A
+INNER JOIN pedido_tb_pedido_venda_situacao D
+    ON A.pedido_venda_situacao_id = D.pedido_venda_situacao_id
+WHERE A.conta_id IN ({ids_str})
+  AND CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo')
+      >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 6 MONTH), '%Y-%m-01')
+  AND D.pedido_venda_situacao_nome != 'Pedido Cancelado'
+GROUP BY A.conta_id, mes
+ORDER BY A.conta_id, mes ASC
+    """
+    df = _rodar_sql(sql)
+    resultado = {}
+    if df.empty:
+        return resultado
+    for conta_id, grupo in df.groupby("conta_id"):
+        resultado[int(conta_id)] = grupo["gmv"].tolist()
+    return resultado
+
 def buscar_tendencia_semanal(conta_id: int) -> dict:
     """
     Compara as últimas 2 semanas vs mesmo período 30 dias atrás.
