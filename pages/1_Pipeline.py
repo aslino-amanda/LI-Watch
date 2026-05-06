@@ -480,18 +480,95 @@ def _enriquecer_gmv(row):
     res = diag_queda_map.get(int(row["loja_id"]))
     return formatar_variacao_gmv(res) if res else "—"
 
+# ── ENRIQUECER df_diag ───────────────────────────────────────────────────────
 if diag_queda_map:
-    df_diag["causa_raiz"]  = df_diag.apply(_enriquecer_causa, axis=1)
-    df_diag["delta_gmv"]   = df_diag.apply(_enriquecer_gmv, axis=1)
-    cols_diag = ["loja_id", "nome_loja", "segmento", "status_loja", "score_risco",
-                 "prioridade", "dias_cadastro", "delta_gmv", "causa_raiz", "acao_recomendada"]
-else:
-    cols_diag = ["loja_id", "nome_loja", "segmento", "status_loja", "score_risco",
-                 "prioridade", "dias_cadastro", "causa_raiz", "acao_recomendada"]
+    df_diag["causa_raiz"] = df_diag.apply(_enriquecer_causa, axis=1)
+    df_diag["delta_gmv"]  = df_diag.apply(_enriquecer_gmv, axis=1)
 
+# Coluna antiguidade legível
+def _antiguidade(dias):
+    try:
+        d = int(dias or 0)
+        if d == 0: return "hoje"
+        if d == 1: return "1 dia"
+        if d < 7:  return f"{d} dias"
+        if d < 30: return f"{d//7}sem {d%7}d" if d%7 else f"{d//7} sem"
+        meses = d // 30
+        resto = d % 30
+        return f"{meses}m {resto}d" if resto else f"{meses} mes{'es' if meses>1 else ''}"
+    except:
+        return "—"
+
+df_diag["na plataforma"] = df_diag["dias_cadastro"].apply(_antiguidade)
+
+# Identifica risco de churn: tem gmv histórico mas zerou
+def _flag_churn(row):
+    loja_raw = df[df["loja_id"] == row["loja_id"]]
+    if loja_raw.empty: return False
+    gmv = float(loja_raw.iloc[0].get("vlr_gmv_ultimos_30d") or 0)
+    tem_venda = loja_raw.iloc[0].get("data_primeira_venda") not in (None, "", "None", "nan")
+    return tem_venda and gmv == 0
+
+df_diag["_churn"] = df_diag.apply(_flag_churn, axis=1)
+
+# ── FILTROS ───────────────────────────────────────────────────────────────────
 st.markdown("### Diagnóstico inteligente — ordenado por risco")
-st.caption("Score de risco + causa raiz de queda (para lojas com histórico de vendas, analisadas com dados reais de GMV, pagamento e base de clientes)")
-st.dataframe(df_diag[cols_diag], use_container_width=True, hide_index=True)
+
+col_f1, col_f2, col_f3 = st.columns(3)
+with col_f1:
+    filtro_status = st.selectbox(
+        "Filtrar por status",
+        ["Todos", "🔴 Onboarding incompleto", "🟡 Nunca vendeu", "🔥 Risco de churn"],
+        key="filtro_status_diag"
+    )
+with col_f2:
+    filtro_plano = st.selectbox(
+        "Plano",
+        ["Todos", "PAGO", "GRATIS"],
+        key="filtro_plano_diag"
+    )
+with col_f3:
+    filtro_dias = st.selectbox(
+        "Antiguidade",
+        ["Todos", "Até 7 dias", "8 a 30 dias", "31 a 60 dias"],
+        key="filtro_dias_diag"
+    )
+
+# Aplica filtros
+df_view = df_diag.copy()
+
+if filtro_status == "🔴 Onboarding incompleto":
+    df_view = df_view[df_view["status_loja"] == "ONBOARDING INCOMPLETO"]
+elif filtro_status == "🟡 Nunca vendeu":
+    df_view = df_view[df_view["status_loja"] == "NUNCA VENDEU"]
+elif filtro_status == "🔥 Risco de churn":
+    df_view = df_view[df_view["_churn"] == True]
+
+# Busca plano no df original
+df_view = df_view.merge(
+    df[["loja_id", "status_plano"]].drop_duplicates(),
+    on="loja_id", how="left"
+)
+if filtro_plano != "Todos":
+    df_view = df_view[df_view["status_plano"].str.upper() == filtro_plano]
+
+if filtro_dias == "Até 7 dias":
+    df_view = df_view[df_view["dias_cadastro"] <= 7]
+elif filtro_dias == "8 a 30 dias":
+    df_view = df_view[(df_view["dias_cadastro"] > 7) & (df_view["dias_cadastro"] <= 30)]
+elif filtro_dias == "31 a 60 dias":
+    df_view = df_view[(df_view["dias_cadastro"] > 30) & (df_view["dias_cadastro"] <= 60)]
+
+n_filtrado = len(df_view)
+st.caption(f"{n_filtrado} loja(s) exibida(s) · Score de risco ordenado por maior urgência")
+
+# Colunas da tabela — sem acao_recomendada, com antiguidade
+cols_base = ["loja_id", "nome_loja", "segmento", "status_loja",
+             "score_risco", "prioridade", "na plataforma", "causa_raiz"]
+if "delta_gmv" in df_view.columns:
+    cols_base.insert(cols_base.index("causa_raiz"), "delta_gmv")
+
+st.dataframe(df_view[cols_base], use_container_width=True, hide_index=True)
 
 st.divider()
 st.markdown("### Detalhamento individual (top 10 por risco)")
