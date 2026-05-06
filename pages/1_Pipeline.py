@@ -139,15 +139,29 @@ def buscar_lojas_para_intervencao():
         END AS status_loja
     FROM analytics_manual.mv_loja
     WHERE situacao_loja = 'ativa'
-      AND data_cadastro_loja >= current_date - interval '30' day
       AND (
-            data_primeira_config_pagamento IS NULL
-         OR data_primeira_config_logistica IS NULL
-         OR data_primeira_config_produto   IS NULL
-         OR data_primeira_venda            IS NULL
-         OR coalesce(vlr_gmv_ultimos_30d, 0) = 0
+        -- Lojas novas com onboarding incompleto ou nunca venderam (últimos 60 dias)
+        (
+          data_cadastro_loja >= current_date - interval '60' day
+          AND (
+                data_primeira_config_pagamento IS NULL
+             OR data_primeira_config_logistica IS NULL
+             OR data_primeira_config_produto   IS NULL
+             OR data_primeira_venda            IS NULL
+          )
+        )
+        OR
+        -- Lojas com histórico de vendas que zeraram GMV (risco de churn, sem limite de data)
+        (
+          data_primeira_venda IS NOT NULL
+          AND coalesce(vlr_gmv_ultimos_30d, 0) = 0
+        )
       )
-    ORDER BY data_cadastro_loja DESC
+    ORDER BY
+      -- Churn primeiro, depois por data de cadastro
+      CASE WHEN data_primeira_venda IS NOT NULL AND coalesce(vlr_gmv_ultimos_30d,0) = 0
+           THEN 0 ELSE 1 END ASC,
+      data_cadastro_loja DESC
     """
 
     payload = {
