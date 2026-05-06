@@ -352,6 +352,65 @@ GROUP BY mes, forma_pagamento ORDER BY mes ASC, total_pedidos DESC
     return _rodar_sql(sql)
 
 
+
+def buscar_tendencia_semanal(conta_id: int) -> dict:
+    """
+    Compara as últimas 2 semanas vs mesmo período 30 dias atrás.
+    Retorna dict com gmv_atual, gmv_anterior, variações e status de risco.
+    """
+    sql = f"""
+WITH
+periodo_atual AS (
+    SELECT
+        COUNT(DISTINCT A.pedido_venda_id)            AS pedidos_atual,
+        ROUND(SUM(A.pedido_venda_valor_total), 2)    AS gmv_atual,
+        ROUND(AVG(A.pedido_venda_valor_total), 2)    AS ticket_atual,
+        MIN(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS de,
+        MAX(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS ate
+    FROM pedido_tb_pedido_venda A
+    INNER JOIN pedido_tb_pedido_venda_situacao D
+        ON A.pedido_venda_situacao_id = D.pedido_venda_situacao_id
+    WHERE A.conta_id = {conta_id}
+      AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
+          >= DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo')) - INTERVAL 14 DAY
+      AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
+          < DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo'))
+      AND D.pedido_venda_situacao_nome != 'Pedido Cancelado'
+),
+periodo_anterior AS (
+    SELECT
+        COUNT(DISTINCT A.pedido_venda_id)            AS pedidos_anterior,
+        ROUND(SUM(A.pedido_venda_valor_total), 2)    AS gmv_anterior,
+        ROUND(AVG(A.pedido_venda_valor_total), 2)    AS ticket_anterior,
+        MIN(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS de,
+        MAX(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS ate
+    FROM pedido_tb_pedido_venda A
+    INNER JOIN pedido_tb_pedido_venda_situacao D
+        ON A.pedido_venda_situacao_id = D.pedido_venda_situacao_id
+    WHERE A.conta_id = {conta_id}
+      AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
+          >= DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo')) - INTERVAL 44 DAY
+      AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
+          < DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo')) - INTERVAL 30 DAY
+      AND D.pedido_venda_situacao_nome != 'Pedido Cancelado'
+)
+SELECT
+    a.pedidos_atual, a.gmv_atual, a.ticket_atual, a.de AS atual_de, a.ate AS atual_ate,
+    p.pedidos_anterior, p.gmv_anterior, p.ticket_anterior, p.de AS ref_de, p.ate AS ref_ate,
+    ROUND((a.gmv_atual - p.gmv_anterior) / p.gmv_anterior * 100, 1)            AS var_gmv_pct,
+    ROUND((a.pedidos_atual - p.pedidos_anterior) / p.pedidos_anterior * 100, 1) AS var_pedidos_pct,
+    ROUND((a.ticket_atual - p.ticket_anterior) / p.ticket_anterior * 100, 1)    AS var_ticket_pct,
+    ROUND(p.gmv_anterior - a.gmv_atual, 2)                                      AS gmv_em_risco
+FROM periodo_atual a
+CROSS JOIN periodo_anterior p
+    """
+    df = _rodar_sql(sql)
+    if df.empty:
+        return {}
+    row = df.iloc[0].to_dict()
+    # Converte para tipos Python nativos
+    return {k: (float(v) if hasattr(v, '__float__') else str(v)) for k, v in row.items()}
+
 def buscar_clientes_churned(conta_id: int, ref_inicio: str, ref_fim: str, corte: str) -> pd.DataFrame:
     """Query 7 da skill — clientes que sumiram após o período de referência."""
     sql = f"""
