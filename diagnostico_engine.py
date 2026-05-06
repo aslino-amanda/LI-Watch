@@ -14,6 +14,27 @@ from datetime import date, datetime
 from typing import Optional
 import pandas as pd
 
+
+# ── HELPERS SEGUROS CONTRA NaN/None ──────────────────────────────────────────
+
+def safe_int(val) -> int:
+    try:
+        v = float(val)
+        import math
+        if math.isnan(v): return 0
+        return int(v)
+    except:
+        return 0
+
+def safe_float(val) -> float:
+    try:
+        v = float(val)
+        import math
+        if math.isnan(v): return 0.0
+        return v
+    except:
+        return 0.0
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CAMADA 0 — BENCHMARK REAL POR SEGMENTO
 # Fonte: query de calibração rodada em 29/04/2026
@@ -191,7 +212,7 @@ def _diagnosticar_nunca_vendeu(loja: dict, bench: dict, dias_cadastro: int, orig
 
     avg_dias = bench["avg_dias_venda"]
     taxa_conv = bench["taxa_conversao"]
-    visitas   = int(loja.get("qtde_visitas_ultimos_30d") or 0)
+    visitas   = safe_int(loja.get("qtde_visitas_ultimos_30d"))
     seg       = normalizar_segmento(loja.get("segmento_loja"))
 
     # Compara com benchmark real do segmento
@@ -269,9 +290,9 @@ def _diagnosticar_sem_vendas_recentes(loja: dict, bench: dict, dias_cadastro: in
     insights = []
     acoes = []
 
-    gmv_30d   = float(loja.get("vlr_gmv_ultimos_30d") or 0)
-    pedidos   = int(loja.get("qtd_pedido_ultimos_30d") or 0)
-    visitas   = int(loja.get("qtde_visitas_ultimos_30d") or 0)
+    gmv_30d   = safe_float(loja.get("vlr_gmv_ultimos_30d"))
+    pedidos   = safe_int(loja.get("qtd_pedido_ultimos_30d"))
+    visitas   = safe_int(loja.get("qtde_visitas_ultimos_30d"))
 
     # Gravidade da queda
     if gmv_30d == 0 and pedidos == 0:
