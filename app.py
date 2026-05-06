@@ -376,14 +376,21 @@ def linha(label, valor_html):
 
 def gerar_excel(loja, diag):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        pd.DataFrame([{
-            "ID": loja.get("loja_id"), "Nome": loja.get("nome_loja"),
-            "Status": loja.get("status_loja"), "Score": diag.get("score_risco"),
-            "Prioridade": diag.get("prioridade"), "Causa raiz": diag.get("causa_raiz"),
-            "Ação": diag.get("acoes",[""])[0], "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
-        }]).T.reset_index().rename(columns={"index":"Campo",0:"Valor"}).to_excel(
-            writer, sheet_name="Diagnóstico", index=False)
+    _acoes = diag.get("acoes", [])
+    _acao  = _acoes[0] if _acoes else "—"
+    dados = {
+        "ID":         loja.get("loja_id","—"),
+        "Nome":       loja.get("nome_loja","—"),
+        "Status":     loja.get("status_loja","—"),
+        "Score":      diag.get("score_risco","—"),
+        "Prioridade": diag.get("prioridade","—"),
+        "Causa raiz": diag.get("causa_raiz","—"),
+        "Acao":       _acao,
+        "Data":       datetime.now().strftime("%d/%m/%Y %H:%M"),
+    }
+    df_excel = pd.DataFrame(list(dados.items()), columns=["Campo", "Valor"])
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_excel.to_excel(writer, sheet_name="Diagnostico", index=False)
     return output.getvalue()
 
 # ── HEADER ────────────────────────────────────────────────────────────────────
