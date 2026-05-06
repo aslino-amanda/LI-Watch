@@ -13,12 +13,12 @@ import metabase_connector as mb
 
 # ── CONFIGURAÇÃO ──────────────────────────────────────────────────────────────
 
-METABASE_URL   = st.secrets["metabase"]["url"]
-METABASE_TOKEN = st.secrets["metabase"]["token"]
-METABASE_DB_ID = int(st.secrets["metabase"]["db_id"])
-HUBSPOT_TOKEN  = st.secrets["hubspot"]["token"]
+METABASE_URL    = st.secrets["metabase"]["url"]
+METABASE_APIKEY = st.secrets["metabase"]["api_key"]
+METABASE_DB_ID  = int(st.secrets["metabase"]["db_id"])
+HUBSPOT_TOKEN   = st.secrets.get("hubspot", {}).get("token", "")
 
-HEADERS_MB = {"X-Metabase-Session": METABASE_TOKEN, "Content-Type": "application/json"}
+HEADERS_MB = {"x-api-key": METABASE_APIKEY, "Content-Type": "application/json"}
 HEADERS_HS = {"Authorization": f"Bearer {HUBSPOT_TOKEN}", "Content-Type": "application/json"}
 
 # ── EMAILS POR STATUS ─────────────────────────────────────────────────────────
