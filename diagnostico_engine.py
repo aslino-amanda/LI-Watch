@@ -501,7 +501,24 @@ def diagnosticar_loja(loja: dict) -> dict:
     elif status == "SEM VENDAS RECENTES":
         diag = _diagnosticar_sem_vendas_recentes(loja, bench, dias_cadastro, origem)
     else:
-        return {"score": 0, "prioridade": "🟢 BAIXA", "causa_raiz": "Loja ativa", "insights": [], "acoes": [], "email": None, "decisao": {}}
+        return {
+            "loja_id":      loja.get("loja_id"),
+            "nome_loja":    loja.get("nome_loja"),
+            "email_loja":   loja.get("email_loja"),
+            "segmento":     seg_norm,
+            "status_loja":  status,
+            "origem":       origem,
+            "dias_cadastro": dias_cadastro,
+            "score_risco":  0,
+            "prioridade":   "🟢 BAIXA",
+            "canal":        "—",
+            "sla":          "—",
+            "causa_raiz":   "Loja ativa",
+            "insights":     [],
+            "acoes":        [],
+            "email":        None,
+            "benchmark":    bench,
+        }
 
     # Decisão
     decisao = _decidir(diag["score"], status, dias_cadastro, origem)
