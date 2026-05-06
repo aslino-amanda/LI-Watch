@@ -84,9 +84,9 @@ JANELA_ABANDONO_DIAS = 15  # Após 15 dias, probabilidade de abandono > 80%
 # ══════════════════════════════════════════════════════════════════════════════
 
 def normalizar_segmento(segmento: Optional[str]) -> str:
-    if not segmento:
+    if not segmento or str(segmento).strip() in ('', 'None', 'nan'):
         return "DEFAULT"
-    s = segmento.upper().strip()
+    s = str(segmento).upper().strip()
     if s in BENCHMARK:
         return s
     for k in BENCHMARK:
