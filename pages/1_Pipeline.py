@@ -164,12 +164,15 @@ def buscar_lojas_para_intervencao():
         timeout=120
     )
 
-    # Metabase 202 = query assíncrona, faz polling
-    if r.status_code == 202:
-        data = r.json()
+    # Metabase pode retornar 200 ou 202 com dados já prontos
+    if r.status_code not in (200, 202):
+        raise Exception(f"Erro Metabase {r.status_code}: {r.text[:200]}")
+    data = r.json()
+    # Se 202 com job_id, faz polling; se já tem rows, usa direto
+    if r.status_code == 202 and "data" not in data:
         job_id = data.get("id")
         if not job_id:
-            raise Exception(f"Metabase 202 sem job_id: {r.text[:200]}")
+            raise Exception(f"Metabase 202 sem job_id nem data: {r.text[:200]}")
         for _ in range(30):
             time.sleep(2)
             poll = requests.get(
@@ -177,17 +180,14 @@ def buscar_lojas_para_intervencao():
                 headers=HEADERS_MB,
                 timeout=30,
             )
-            if poll.status_code == 200:
+            if poll.status_code in (200, 202):
                 data = poll.json()
-                break
-            if poll.status_code != 202:
+                if "data" in data:
+                    break
+            else:
                 raise Exception(f"Polling falhou {poll.status_code}: {poll.text[:200]}")
         else:
             raise Exception("Timeout: Metabase nao respondeu em 60s")
-    elif r.status_code != 200:
-        raise Exception(f"Erro Metabase {r.status_code}: {r.text[:200]}")
-    else:
-        data = r.json()
 
     if "error" in data:
         raise Exception(data["error"])
