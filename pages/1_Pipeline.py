@@ -428,34 +428,31 @@ with st.spinner("Calculando score de risco..."):
 # ── DIAGNÓSTICO DE QUEDA — TOP 50 SELLERS EM RISCO ──────────────────────────
 diag_queda_map = {}
 
-with st.spinner("Identificando top sellers em risco (últimas 2 semanas)..."):
+with st.spinner("Identificando top sellers em risco (comparando mesmos dias dos últimos 6 meses)..."):
     try:
         df_top = mb.buscar_top_lojas(limite=50)
 
-        # Para cada top seller, compara últimas 2 semanas vs mesmo período 30 dias atrás
+        # Para cada top seller, compara dias 1-hoje do mês atual vs média dos 6 meses anteriores
         top_sellers_em_risco = []
         for _, row_top in df_top.iterrows():
             try:
                 lid = int(row_top["conta_id"])
-                semanal = mb.buscar_tendencia_semanal(lid)
-                if not semanal or not semanal.get("gmv_anterior"):
+                periodico = mb.buscar_tendencia_periodica(lid)
+                if not periodico or not periodico.get("gmv_media_6m"):
                     continue
-                gmv_ant  = float(semanal.get("gmv_anterior") or 0)
-                gmv_atu  = float(semanal.get("gmv_atual") or 0)
-                if gmv_ant == 0:
-                    continue
-                var_pct = round((gmv_atu - gmv_ant) / gmv_ant * 100, 1)
-                if var_pct <= -20:   # gatilho: queda de 20%+
+                var_pct = float(periodico.get("var_pct") or 0)
+                if var_pct <= -20:   # gatilho: queda de 20%+ vs média histórica
                     top_sellers_em_risco.append({
                         "loja_id":       lid,
                         "nome_loja":     row_top["nome_loja"],
                         "segmento":      row_top["segmento"],
-                        "gmv_ref":       gmv_ant,
-                        "gmv_atual":     gmv_atu,
+                        "gmv_media_6m":  periodico["gmv_media_6m"],
+                        "gmv_atual":     periodico["gmv_atual"],
                         "var_pct":       var_pct,
-                        "gmv_em_risco":  round(gmv_ant - gmv_atu, 2),
+                        "gmv_em_risco":  periodico["gmv_em_risco"],
                         "gmv_6m":        float(row_top["gmv_6m"]),
-                        "status_loja":   "SEM VENDAS RECENTES",  # campo necessário para batch
+                        "historico":     periodico.get("historico", []),
+                        "status_loja":   "SEM VENDAS RECENTES",
                     })
             except:
                 continue
@@ -468,7 +465,7 @@ with st.spinner("Identificando top sellers em risco (últimas 2 semanas)..."):
         st.warning(f"Não foi possível carregar top sellers: {e}")
 
 if n_top_risco > 0:
-    with st.expander(f"🔥 Top Sellers em risco — {n_top_risco} loja(s) com queda 20%+ nas últimas 2 semanas", expanded=True):
+    with st.expander(f"🔥 Top Sellers em risco — {n_top_risco} loja(s) com queda 20%+ vs média histórica", expanded=True):
         st.markdown(
             "<div style='background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;"
             "padding:.8rem 1rem;font-size:13px;color:#991B1B;margin-bottom:.8rem'>"
@@ -478,21 +475,39 @@ if n_top_risco > 0:
             unsafe_allow_html=True,
         )
 
-        # Tabela resumida — dados da comparação semanal
+        # Tabela resumida — comparação mesmo período dos últimos 6 meses
+        import datetime
+        dia_atual = datetime.date.today().day
         rows_ui = []
         for _, r in df_churn_top.iterrows():
             rows_ui.append({
-                "ID":              int(r["loja_id"]),
-                "Loja":            r["nome_loja"],
-                "Segmento":        r["segmento"],
-                "GMV ref (2sem)":  f"R${r['gmv_ref']:,.0f}",
-                "GMV atual (2sem)": f"R${r['gmv_atual']:,.0f}",
-                "Variação":        f"{r['var_pct']:.0f}%",
-                "GMV em risco":    f"R${r['gmv_em_risco']:,.0f}",
-                "GMV 6m (hist)":   f"R${r['gmv_6m']:,.0f}",
+                "ID":                  int(r["loja_id"]),
+                "Loja":                r["nome_loja"],
+                "Segmento":            r["segmento"],
+                "Média 6m (dias 1-{})".format(dia_atual): f"R${r['gmv_media_6m']:,.0f}",
+                "Mês atual (dias 1-{})".format(dia_atual): f"R${r['gmv_atual']:,.0f}",
+                "Variação vs média":   f"{r['var_pct']:.0f}%",
+                "GMV em risco":        f"R${r['gmv_em_risco']:,.0f}",
+                "GMV 6m total":        f"R${r['gmv_6m']:,.0f}",
             })
-        df_ui = pd.DataFrame(rows_ui).sort_values("Variação")
+        df_ui = pd.DataFrame(rows_ui).sort_values("Variação vs média")
         st.dataframe(df_ui, use_container_width=True, hide_index=True)
+
+        # Mini histórico por loja
+        st.markdown("#### Histórico mês a mês (dias 1–{} de cada mês)".format(dia_atual))
+        for _, r in df_churn_top.iterrows():
+            var = r["var_pct"]
+            emoji = "🔴" if var <= -50 else "🟡"
+            with st.expander(f"{emoji} {r['nome_loja']} — {var:.0f}% vs média histórica"):
+                hist = r.get("historico", [])
+                if hist:
+                    df_hist = pd.DataFrame(hist)[["mes", "total_pedidos", "gmv_periodo", "ticket_medio"]]
+                    df_hist.columns = ["Mês", "Pedidos", "GMV", "Ticket médio"]
+                    df_hist["GMV"] = df_hist["GMV"].apply(lambda x: f"R${float(x):,.0f}")
+                    df_hist["Ticket médio"] = df_hist["Ticket médio"].apply(lambda x: f"R${float(x):,.2f}")
+                    # Destaca linha do mês atual
+                    st.markdown(f"**Média histórica (6m):** R${r['gmv_media_6m']:,.0f} &nbsp;·&nbsp; **Mês atual:** R${r['gmv_atual']:,.0f} &nbsp;·&nbsp; **Em risco:** R${r['gmv_em_risco']:,.0f}")
+                    st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
         # Diagnóstico de causa raiz para cada loja em risco
         st.markdown("#### Causa raiz por loja")
@@ -545,7 +560,7 @@ else:
     st.markdown(
         "<div style='background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;"
         "padding:.8rem 1rem;font-size:13px;color:#166534;margin-bottom:1rem'>"
-        "✅ Nenhum top seller com queda de 20%+ esta semana."
+        "✅ Nenhum top seller com queda de 20%+ vs média histórica dos últimos 6 meses."
         "</div>",
         unsafe_allow_html=True,
     )
