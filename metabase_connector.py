@@ -257,28 +257,63 @@ ORDER BY 1 DESC
 # ── QUERY 2: TOP LOJAS POR FATURAMENTO (para lista de queda) ─────────────────
 
 def buscar_top_lojas(limite: int = 100) -> pd.DataFrame:
-    """Retorna as lojas com maior GMV nos últimos 6 meses para a lista de seleção."""
-    hoje = date.today()
-    data_inicio = (hoje - relativedelta(months=6)).strftime("%Y-%m-%d")
-    data_fim = hoje.strftime("%Y-%m-%d")
-
+    """
+    Retorna as top lojas por GMV dos últimos 90 dias.
+    Usa analytics_manual.mv_pedido (atualizada, mesma engine do mv_loja).
+    Inclui projeção do mês atual e variação vs média histórica.
+    """
     sql = f"""
+WITH cte_pedido AS (
+    SELECT
+        loja_id,
+        ROUND(SUM(IF(data_criacao_pedido >= DATE(DATE_TRUNC('MONTH', CURRENT_DATE())), vlr_total, 0)), 2) AS vlr_gmv_mes_atual,
+        ROUND(SUM(IF(data_criacao_pedido >= DATE(CURRENT_DATE() - INTERVAL 30 DAY), vlr_total, 0)), 2)   AS vlr_gmv_30d,
+        ROUND(SUM(IF(data_criacao_pedido >= DATE(CURRENT_DATE() - INTERVAL 60 DAY), vlr_total, 0)), 2)   AS vlr_gmv_60d,
+        ROUND(SUM(vlr_total), 2)                                                                          AS vlr_gmv_90d,
+        COUNT_IF(data_criacao_pedido >= DATE(DATE_TRUNC('MONTH', CURRENT_DATE())))                        AS qtd_pedido_mes_atual,
+        COUNT_IF(data_criacao_pedido >= DATE(CURRENT_DATE() - INTERVAL 30 DAY))                          AS qtd_pedido_30d
+    FROM analytics_manual.mv_pedido
+    WHERE data_criacao_pedido >= DATE(CURRENT_DATE() - INTERVAL 90 DAY)
+      AND (integrador IS NULL OR marketplace IS NULL)
+      AND flag_aprovado_hist = 1
+    GROUP BY loja_id
+),
+base AS (
+    SELECT
+        loja_id,
+        vlr_gmv_mes_atual,
+        vlr_gmv_30d,
+        vlr_gmv_90d,
+        qtd_pedido_mes_atual,
+        qtd_pedido_30d,
+        ROUND((vlr_gmv_90d - vlr_gmv_30d) / 2, 2) AS vlr_gmv_media_2m,
+        ROUND(
+            vlr_gmv_mes_atual / DAY(CURRENT_DATE()) * DAY(LAST_DAY(CURRENT_DATE())),
+            2
+        ) AS vlr_gmv_projetado
+    FROM cte_pedido
+    WHERE vlr_gmv_90d > 0
+)
 SELECT
-    a.loja_id                           AS conta_id
-    ,l.desc_nome_loja                   AS nome_loja
-    ,upper(l.desc_segmento)             AS segmento
-    ,round(sum(a.vlr_gmv), 2)           AS gmv_6m
-    ,count(DISTINCT a.pedido_id)        AS pedidos_6m
-FROM analytics_gold.ft_pedido AS a
-INNER JOIN (
-    SELECT DISTINCT pedido_id
-    FROM analytics_gold.dim_pedido
-    WHERE flag_aprovado_pedido = 1
-) AS b ON a.pedido_id = b.pedido_id
-INNER JOIN analytics_gold.dim_loja AS l ON a.loja_id = l.loja_id
-WHERE a.dt_pedido_criacao BETWEEN '{data_inicio}' AND '{data_fim}'
-GROUP BY 1, 2, 3
-ORDER BY gmv_6m DESC
+    b.loja_id                                                               AS conta_id,
+    l.nome_loja,
+    upper(l.segmento_loja)                                                  AS segmento,
+    l.tier_loja,
+    l.tipo_plano_atual,
+    b.vlr_gmv_90d                                                           AS gmv_6m,
+    b.vlr_gmv_mes_atual,
+    b.vlr_gmv_projetado,
+    b.vlr_gmv_media_2m,
+    b.qtd_pedido_mes_atual,
+    b.qtd_pedido_30d,
+    ROUND(
+        (b.vlr_gmv_projetado - b.vlr_gmv_media_2m) / NULLIF(b.vlr_gmv_media_2m, 0) * 100,
+        1
+    )                                                                       AS var_projetado_pct
+FROM base b
+LEFT JOIN analytics_manual.mv_loja l ON b.loja_id = l.loja_id
+WHERE b.vlr_gmv_media_2m >= 10000
+ORDER BY b.vlr_gmv_90d DESC
 LIMIT {limite}
     """
     return _rodar_sql(sql)
