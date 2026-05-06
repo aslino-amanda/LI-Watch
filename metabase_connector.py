@@ -256,7 +256,7 @@ ORDER BY 1 DESC
 
 # ── QUERY 2: TOP LOJAS POR FATURAMENTO (para lista de queda) ─────────────────
 
-def buscar_top_lojas(limite: int = 50) -> pd.DataFrame:
+def buscar_top_lojas(limite: int = 100) -> pd.DataFrame:
     """Retorna as lojas com maior GMV nos últimos 6 meses para a lista de seleção."""
     hoje = date.today()
     data_inicio = (hoje - relativedelta(months=6)).strftime("%Y-%m-%d")
