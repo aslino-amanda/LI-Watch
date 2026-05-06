@@ -423,6 +423,29 @@ with col_help:
         st.markdown("**E-mail pronto:** Aparece quando ha intervencao. Copie e envie para o lojista.")
         st.markdown("**Download Excel:** Exporta o diagnostico completo.")
 
+
+def gerar_sparkline(valores: list, largura=80, altura=28) -> str:
+    """Gera um sparkline SVG inline para exibir tendência de GMV."""
+    if not valores or len(valores) < 2:
+        return "<span style='color:#ccc;font-size:11px'>—</span>"
+    try:
+        vmin, vmax = min(valores), max(valores)
+        if vmax == vmin:
+            vmax = vmin + 1
+        def _x(i): return int(i / (len(valores)-1) * largura)
+        def _y(v): return int(altura - (v - vmin) / (vmax - vmin) * (altura - 4) - 2)
+        pontos = " ".join(f"{_x(i)},{_y(v)}" for i, v in enumerate(valores))
+        cor = "#E24B4A" if valores[-1] < valores[0] else "#1ABCB0"
+        penultimo = valores[-2] if len(valores) >= 2 else valores[-1]
+        seta = "▼" if valores[-1] < penultimo else "▲"
+        cor_seta = "#E24B4A" if valores[-1] < penultimo else "#1ABCB0"
+        return (f'<svg width="{largura}" height="{altura}" xmlns="http://www.w3.org/2000/svg">'
+                f'<polyline points="{pontos}" fill="none" stroke="{cor}" stroke-width="2" stroke-linejoin="round"/>'
+                f'<circle cx="{_x(len(valores)-1)}" cy="{_y(valores[-1])}" r="3" fill="{cor}"/>'
+                f'</svg><span style="color:{cor_seta};font-size:10px;margin-left:2px">{seta}</span>')
+    except:
+        return "<span style='color:#ccc;font-size:11px'>—</span>"
+
 if not termo.strip():
     if not modo_real:
         st.markdown(
