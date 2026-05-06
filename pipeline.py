@@ -4,6 +4,12 @@ import pandas as pd
 from datetime import datetime, date
 from diagnostico_engine import diagnosticar_dataframe, diagnosticar_loja
 from alertas import exibir_alertas
+from diagnostico_queda import (
+    diagnosticar_queda_batch,
+    formatar_causa_curta,
+    formatar_variacao_gmv,
+)
+import metabase_connector as mb
 
 # ── CONFIGURAÇÃO ──────────────────────────────────────────────────────────────
 
@@ -382,14 +388,87 @@ m4.metric("🟠 Sem vendas recentes", sem_vendas)
 
 st.divider()
 
-# Diagnóstico inteligente
+# ── DIAGNÓSTICO INTELIGENTE ───────────────────────────────────────────────────
 with st.spinner("Calculando score de risco..."):
     df_diag = diagnosticar_dataframe(df)
 
-st.markdown("### Diagnóstico inteligente — ordenado por risco")
-st.caption("Score calculado com base em: dias travada, gargalo específico, benchmark do segmento e origem")
+# ── DIAGNÓSTICO DE QUEDA (lojas SEM VENDAS RECENTES) ─────────────────────────
+n_queda = len(df[df["status_loja"] == "SEM VENDAS RECENTES"])
+diag_queda_map = {}
 
-cols_diag = ["loja_id","nome_loja","segmento","status_loja","score_risco","prioridade","dias_cadastro","causa_raiz","acao_recomendada"]
+if n_queda > 0:
+    with st.expander(f"🔍 Diagnóstico de queda — {n_queda} loja(s) com histórico de vendas", expanded=True):
+        st.markdown(
+            "<div style='background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;"
+            "padding:.8rem 1rem;font-size:13px;color:#92400E;margin-bottom:.8rem'>"
+            "⚙️ Analisando histórico de GMV, mix de pagamento e base de clientes para cada loja. "
+            "Isso pode levar alguns segundos..."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        progresso = st.progress(0, text="Iniciando análise de queda...")
+
+        def _atualizar_progresso(atual, total):
+            pct = int(atual / total * 100)
+            progresso.progress(pct, text=f"Diagnosticando loja {atual} de {total}...")
+
+        try:
+            diag_queda_map = diagnosticar_queda_batch(
+                df_pipeline=df,
+                connector=mb,
+                status_alvo="SEM VENDAS RECENTES",
+                progress_callback=_atualizar_progresso,
+            )
+            progresso.empty()
+
+            # Mini-tabela de resultados de queda
+            rows_queda = []
+            for loja_id, res in diag_queda_map.items():
+                rows_queda.append({
+                    "ID":           loja_id,
+                    "Loja":         res["nome_loja"],
+                    "Severidade":   res["severidade"],
+                    "Δ GMV":        formatar_variacao_gmv(res),
+                    "Causa raiz":   formatar_causa_curta(res),
+                })
+            df_queda_ui = pd.DataFrame(rows_queda).sort_values(
+                "Severidade",
+                key=lambda s: s.map({"CRÍTICO": 0, "ATENÇÃO": 1, "INVESTIGAR": 2}),
+            )
+            st.dataframe(df_queda_ui, use_container_width=True, hide_index=True)
+
+        except Exception as e:
+            progresso.empty()
+            st.error(f"Erro no diagnóstico de queda: {e}")
+
+    st.divider()
+
+# Enriquece df_diag com causa de queda para lojas SEM VENDAS RECENTES
+def _enriquecer_causa(row):
+    if row["status_loja"] != "SEM VENDAS RECENTES":
+        return row["causa_raiz"]
+    res = diag_queda_map.get(int(row["loja_id"]))
+    if res:
+        return formatar_causa_curta(res)
+    return row["causa_raiz"]
+
+def _enriquecer_gmv(row):
+    if row["status_loja"] != "SEM VENDAS RECENTES":
+        return "—"
+    res = diag_queda_map.get(int(row["loja_id"]))
+    return formatar_variacao_gmv(res) if res else "—"
+
+if diag_queda_map:
+    df_diag["causa_raiz"]  = df_diag.apply(_enriquecer_causa, axis=1)
+    df_diag["delta_gmv"]   = df_diag.apply(_enriquecer_gmv, axis=1)
+    cols_diag = ["loja_id", "nome_loja", "segmento", "status_loja", "score_risco",
+                 "prioridade", "dias_cadastro", "delta_gmv", "causa_raiz", "acao_recomendada"]
+else:
+    cols_diag = ["loja_id", "nome_loja", "segmento", "status_loja", "score_risco",
+                 "prioridade", "dias_cadastro", "causa_raiz", "acao_recomendada"]
+
+st.markdown("### Diagnóstico inteligente — ordenado por risco")
+st.caption("Score de risco + causa raiz de queda (para lojas com histórico de vendas, analisadas com dados reais de GMV, pagamento e base de clientes)")
 st.dataframe(df_diag[cols_diag], use_container_width=True, hide_index=True)
 
 st.divider()
