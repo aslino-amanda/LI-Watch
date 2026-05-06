@@ -435,6 +435,63 @@ if not termo.strip():
         import datetime as _dt
         import numpy as np
 
+        # ── PAINEL DE ALERTAS ─────────────────────────────────────────────────
+        try:
+            with st.spinner("Verificando alertas..."):
+                df_alert = buscar_base_monitoramento()
+            if not df_alert.empty:
+                from alertas import detectar_alertas
+                alertas = detectar_alertas(df_alert)
+                if alertas:
+                    n_criticos = sum(1 for a in alertas if a["severidade"] == "CRÍTICO")
+                    n_atencao  = sum(1 for a in alertas if a["severidade"] == "ATENÇÃO")
+                    st.markdown(f"""
+                    <div style='background:#0D4F4A;border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem'>
+                        <div style='display:flex;justify-content:space-between;align-items:center'>
+                            <div>
+                                <div style='font-size:13px;font-weight:700;color:#D4F53C;margin-bottom:2px'>
+                                    👁️ LI Watch — {len(alertas)} alerta(s) detectado(s) agora
+                                </div>
+                                <div style='font-size:12px;color:#9DCFCC'>
+                                    {n_criticos} crítico(s) · {n_atencao} atenção · Atualizado agora
+                                </div>
+                            </div>
+                            <div style='font-size:24px'>{"🔴" if n_criticos > 0 else "🟡"}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    for alerta in alertas:
+                        col_alert, col_acao = st.columns([4, 1])
+                        with col_alert:
+                            st.markdown(f"""
+                            <div style='background:{alerta["cor_bg"]};border:1px solid {alerta["cor_borda"]};
+                                        border-left:4px solid {alerta["cor_borda"]};border-radius:8px;
+                                        padding:.6rem 1rem;margin-bottom:5px'>
+                                <div style='font-size:13px;font-weight:600;color:{alerta["cor_texto"]}'>
+                                    {alerta["emoji"]} {alerta["titulo"]}
+                                </div>
+                                <div style='font-size:12px;color:#555;margin-top:2px'>{alerta["descricao"]}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        with col_acao:
+                            st.markdown(f"""
+                            <div style='background:white;border:1px solid {alerta["cor_borda"]};border-radius:8px;
+                                        padding:.6rem .8rem;margin-bottom:5px;font-size:11px;
+                                        color:{alerta["cor_texto"]};font-weight:600;text-align:center'>
+                                → {alerta["acao"]}
+                            </div>
+                            """, unsafe_allow_html=True)
+                    st.divider()
+                else:
+                    st.markdown("""
+                    <div style='background:#F0FDF4;border:1px solid #86EFAC;border-radius:10px;
+                                padding:.7rem 1.2rem;margin-bottom:1rem;font-size:13px;color:#166534'>
+                        ✅ <strong>Sem alertas críticos agora</strong> — todas as lojas monitoradas estão dentro do esperado.
+                    </div>
+                    """, unsafe_allow_html=True)
+        except Exception as e:
+            st.warning(f"Alertas indisponíveis: {e}")
+
         tab_onb, tab_churn = st.tabs(["🚀 Onboarding — Lojas novas", "🔥 Top Sellers em risco"])
 
         # ══════════════════════════════════════════════════════════════════════
@@ -562,6 +619,56 @@ if not termo.strip():
                         file_name=f"onboarding_{_dt.date.today().strftime('%Y%m%d')}.csv",
                         mime="text/csv")
 
+                    # ── COHORT DE ONBOARDING ──────────────────────────────────
+                    st.divider()
+                    st.markdown("#### 📊 Evolução por cohort — % que já vendeu por mês de entrada")
+                    df_cohort = df_onb[df_onb["status_loja"] != "LOJA ATIVA"].copy()
+                    if not df_cohort.empty and "mes_entrada" in df_cohort.columns:
+                        cohort = df_cohort.groupby("mes_entrada").agg(
+                            total=("loja_id","count"),
+                            venderam=("data_primeira_venda", lambda x: x.notna().sum()),
+                            pagos=("status_plano", lambda x: (x.str.upper()=="PAGO").sum()),
+                            criticos=("score", lambda x: (pd.to_numeric(x,errors="coerce")>=70).sum()),
+                        ).reset_index().sort_values("mes_entrada", ascending=False)
+
+                        cohort["% vendeu"]   = (cohort["venderam"] / cohort["total"] * 100).round(1)
+                        cohort["% pagos"]    = (cohort["pagos"]    / cohort["total"] * 100).round(1)
+                        cohort["% críticos"] = (cohort["criticos"] / cohort["total"] * 100).round(1)
+
+                        def _fmt_mes_cohort(m):
+                            try:
+                                ano, num = m.split("-")
+                                return f"{_nomes_mes.get(num,num)}/{ano}"
+                            except:
+                                return m
+
+                        cohort["Mês"] = cohort["mes_entrada"].apply(_fmt_mes_cohort)
+
+                        # Cards por cohort
+                        cols_cohort = st.columns(min(len(cohort), 3))
+                        for i, (_, row_c) in enumerate(cohort.iterrows()):
+                            with cols_cohort[i % 3]:
+                                pct_venda = float(row_c["% vendeu"])
+                                cor_pct = "#1ABCB0" if pct_venda >= 30 else "#F59E0B" if pct_venda >= 10 else "#E24B4A"
+                                st.markdown(
+                                    f"<div style='background:white;border:1px solid #e0ddd6;border-radius:10px;"
+                                    f"padding:.8rem 1rem;margin-bottom:8px'>"
+                                    f"<div style='font-size:13px;font-weight:700;color:#1A2E2B'>{row_c['Mês']}</div>"
+                                    f"<div style='font-size:11px;color:#888;margin:.3rem 0'>{int(row_c['total'])} lojas</div>"
+                                    f"<div style='display:flex;gap:8px;margin-top:.5rem'>"
+                                    f"<div style='flex:1;background:#F0FDF4;border-radius:6px;padding:.4rem;text-align:center'>"
+                                    f"<div style='font-size:18px;font-weight:800;color:{cor_pct}'>{pct_venda:.0f}%</div>"
+                                    f"<div style='font-size:10px;color:#888'>já vendeu</div></div>"
+                                    f"<div style='flex:1;background:#FEF2F2;border-radius:6px;padding:.4rem;text-align:center'>"
+                                    f"<div style='font-size:18px;font-weight:800;color:#E24B4A'>{row_c['% críticos']:.0f}%</div>"
+                                    f"<div style='font-size:10px;color:#888'>críticos</div></div>"
+                                    f"<div style='flex:1;background:#EEEDFE;border-radius:6px;padding:.4rem;text-align:center'>"
+                                    f"<div style='font-size:18px;font-weight:800;color:#6366F1'>{row_c['% pagos']:.0f}%</div>"
+                                    f"<div style='font-size:10px;color:#888'>pagos</div></div>"
+                                    f"</div></div>",
+                                    unsafe_allow_html=True
+                                )
+
             except Exception as e:
                 st.warning(f"Erro ao carregar onboarding: {e}")
 
@@ -587,6 +694,41 @@ if not termo.strip():
                 n_atencao = len(df_top[(df_top["var_projetado_pct"] > -50) & (df_top["var_projetado_pct"] <= -20)])
                 n_ok      = len(df_top[df_top["var_projetado_pct"] > -20])
 
+                # GMV total em risco
+                gmv_total_risco = pd.to_numeric(
+                    df_risco["vlr_gmv_media_2m"] if "vlr_gmv_media_2m" in df_risco.columns else pd.Series([0]),
+                    errors="coerce"
+                ).fillna(0).sum() - pd.to_numeric(
+                    df_risco["vlr_gmv_projetado"] if "vlr_gmv_projetado" in df_risco.columns else pd.Series([0]),
+                    errors="coerce"
+                ).fillna(0).sum()
+                gmv_total_risco = max(0, gmv_total_risco)
+
+                # Faixa de impacto
+                st.markdown(f"""
+                <div style='background:linear-gradient(135deg,#0D4F4A,#1A7A72);border-radius:12px;
+                            padding:1rem 1.5rem;margin-bottom:1rem;display:flex;
+                            justify-content:space-between;align-items:center'>
+                    <div>
+                        <div style='font-size:11px;color:#9DCFCC;text-transform:uppercase;letter-spacing:.1em'>
+                            GMV em risco este mês
+                        </div>
+                        <div style='font-size:28px;font-weight:800;color:#D4F53C'>
+                            R${gmv_total_risco:,.0f}
+                        </div>
+                        <div style='font-size:12px;color:#9DCFCC;margin-top:2px'>
+                            em {n_risco} das top 100 lojas monitoradas
+                        </div>
+                    </div>
+                    <div style='text-align:right'>
+                        <div style='font-size:11px;color:#9DCFCC;margin-bottom:4px'>Distribuição de risco</div>
+                        <div style='font-size:14px;color:white'>
+                            🔴 {n_critico} crítico &nbsp;·&nbsp; 🟡 {n_atencao} risco &nbsp;·&nbsp; 🟢 {n_ok} OK
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
                 c1,c2,c3,c4 = st.columns(4)
                 c1.metric("Top sellers monitoradas", len(df_top))
                 c2.metric("🔴 Crítico (>50% queda)", n_critico)
@@ -596,10 +738,22 @@ if not termo.strip():
 
                 if n_risco > 0:
                     st.markdown(f"**{n_risco} loja(s) com queda de 20%+ — GMV projetado abaixo da média histórica**")
+
+                    # Busca histórico mensal para sparklines
+                    ids_risco = df_risco["conta_id"].astype(int).tolist()
+                    try:
+                        historico_map = mb.buscar_historico_mensal_batch(ids_risco)
+                    except:
+                        historico_map = {}
+
                     rows_ui = []
+                    sparklines_html = []
                     for _, r in df_risco.sort_values("var_projetado_pct").iterrows():
+                        lid = int(r["conta_id"])
+                        hist = historico_map.get(lid, [])
+                        spark = gerar_sparkline(hist)
                         rows_ui.append({
-                            "ID":                         int(r["conta_id"]),
+                            "ID":                         lid,
                             "Loja":                       r["nome_loja"],
                             "Segmento":                   r.get("segmento","—"),
                             "Tier":                       r.get("tier_loja","—"),
@@ -609,9 +763,33 @@ if not termo.strip():
                             "Variacao":                   f"{float(r['var_projetado_pct']):.0f}%",
                             "GMV em risco":               f"R${float(r['gmv_em_risco'] or 0):,.0f}",
                         })
-                    st.dataframe(pd.DataFrame(rows_ui), use_container_width=True, hide_index=True)
+                        sparklines_html.append(spark)
+
+                    df_ui = pd.DataFrame(rows_ui)
+                    st.dataframe(df_ui, use_container_width=True, hide_index=True)
+
+                    # Sparklines por loja — tendência visual 6 meses
+                    if any(historico_map.values()):
+                        st.markdown("**Tendência GMV — últimos 6 meses por loja:**")
+                        n_cols = 4
+                        cols_spark = st.columns(n_cols)
+                        for i, (row, spark) in enumerate(zip(rows_ui, sparklines_html)):
+                            with cols_spark[i % n_cols]:
+                                var_val = float(df_risco.sort_values("var_projetado_pct").iloc[i]["var_projetado_pct"])
+                                cor_var = "#E24B4A" if var_val <= -50 else "#F59E0B"
+                                st.markdown(
+                                    f"<div style='background:white;border:1px solid #e0ddd6;border-radius:8px;"
+                                    f"padding:.6rem .8rem;margin-bottom:8px;text-align:center'>"
+                                    f"<div style='font-size:11px;font-weight:600;color:#1A2E2B;margin-bottom:4px'>{str(row['Loja'])[:22]}</div>"
+                                    f"{spark}"
+                                    f"<div style='font-size:12px;color:{cor_var};font-weight:700;margin-top:4px'>{row['Variacao']}</div>"
+                                    f"<div style='font-size:10px;color:#888'>{row['GMV em risco']} em risco</div>"
+                                    f"</div>",
+                                    unsafe_allow_html=True
+                                )
+
                     st.download_button("Exportar CSV",
-                        data=pd.DataFrame(rows_ui).to_csv(index=False).encode("utf-8"),
+                        data=df_ui.to_csv(index=False).encode("utf-8"),
                         file_name=f"top_sellers_risco_{_dt.date.today().strftime('%Y%m%d')}.csv",
                         mime="text/csv")
                 else:
