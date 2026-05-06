@@ -353,6 +353,75 @@ GROUP BY mes, forma_pagamento ORDER BY mes ASC, total_pedidos DESC
 
 
 
+
+def buscar_tendencia_periodica(conta_id: int) -> dict:
+    """
+    Compara GMV dos dias 1 até hoje em cada mês dos últimos 6 meses.
+    Base = média dos 6 meses anteriores no mesmo período.
+    Retorna dict com histórico mensal e status do mês atual.
+    """
+    sql = f"""
+WITH periodos AS (
+    SELECT
+        DATE_FORMAT(
+            CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'),
+            '%Y-%m'
+        )                                                          AS mes,
+        COUNT(DISTINCT A.pedido_venda_id)                          AS total_pedidos,
+        ROUND(SUM(A.pedido_venda_valor_total), 2)                  AS gmv_periodo,
+        ROUND(AVG(A.pedido_venda_valor_total), 2)                  AS ticket_medio
+    FROM pedido_tb_pedido_venda A
+    INNER JOIN pedido_tb_pedido_venda_situacao D
+        ON A.pedido_venda_situacao_id = D.pedido_venda_situacao_id
+    WHERE A.conta_id = {conta_id}
+      AND DAY(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
+          BETWEEN 1 AND DAY(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo'))
+      AND CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo')
+          >= DATE_FORMAT(
+              DATE_SUB(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo'), INTERVAL 6 MONTH),
+              '%Y-%m-01'
+             )
+      AND D.pedido_venda_situacao_nome != 'Pedido Cancelado'
+    GROUP BY mes
+),
+base AS (
+    SELECT ROUND(AVG(gmv_periodo), 2) AS gmv_media_6m
+    FROM periodos
+    WHERE mes < DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo'), '%Y-%m')
+)
+SELECT
+    p.mes,
+    p.total_pedidos,
+    p.gmv_periodo,
+    p.ticket_medio,
+    b.gmv_media_6m,
+    ROUND((p.gmv_periodo - b.gmv_media_6m) / b.gmv_media_6m * 100, 1) AS var_vs_media_pct
+FROM periodos p
+CROSS JOIN base b
+ORDER BY p.mes ASC
+    """
+    df = _rodar_sql(sql)
+    if df.empty:
+        return {}
+
+    mes_atual = df.iloc[-1].to_dict()
+    historico = df.iloc[:-1].to_dict(orient="records")
+
+    gmv_atual  = float(mes_atual.get("gmv_periodo") or 0)
+    gmv_media  = float(mes_atual.get("gmv_media_6m") or 0)
+    var_pct    = float(mes_atual.get("var_vs_media_pct") or 0)
+
+    return {
+        "mes_atual":    mes_atual.get("mes"),
+        "gmv_atual":    gmv_atual,
+        "gmv_media_6m": gmv_media,
+        "var_pct":      var_pct,
+        "gmv_em_risco": round(gmv_media - gmv_atual, 2) if gmv_media > gmv_atual else 0,
+        "pedidos_atual": int(mes_atual.get("total_pedidos") or 0),
+        "ticket_atual": float(mes_atual.get("ticket_medio") or 0),
+        "historico":    historico,
+    }
+
 def buscar_tendencia_semanal(conta_id: int) -> dict:
     """
     Compara as últimas 2 semanas vs mesmo período 30 dias atrás.
