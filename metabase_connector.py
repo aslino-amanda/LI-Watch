@@ -9,23 +9,40 @@ from dateutil.relativedelta import relativedelta
 def _cfg():
     return (
         st.secrets["metabase"]["url"],
-        st.secrets["metabase"]["token"],
+        st.secrets["metabase"]["api_key"],
         int(st.secrets["metabase"]["db_id"]),
     )
 
 def _headers():
-    _, token, _ = _cfg()
-    return {"X-Metabase-Session": token, "Content-Type": "application/json"}
+    _, api_key, _ = _cfg()
+    return {"x-api-key": api_key, "Content-Type": "application/json"}
 
 # ── EXECUTAR SQL ──────────────────────────────────────────────────────────────
 
 def _rodar_sql(sql: str) -> pd.DataFrame:
+    import time
     url, _, db_id = _cfg()
     payload = {"database": db_id, "type": "native", "native": {"query": sql}}
     r = requests.post(f"{url}/api/dataset", headers=_headers(), json=payload, timeout=120)
-    if r.status_code != 200:
+    if r.status_code not in (200, 202):
         raise Exception(f"Erro {r.status_code}: {r.text[:300]}")
     data = r.json()
+    # 202 com dados prontos: usa direto; sem dados: polling
+    if r.status_code == 202 and "data" not in data:
+        job_id = data.get("id")
+        if not job_id:
+            raise Exception(f"Metabase 202 sem job_id: {r.text[:200]}")
+        for _ in range(30):
+            time.sleep(2)
+            poll = requests.get(f"{url}/api/dataset/{job_id}", headers=_headers(), timeout=30)
+            if poll.status_code in (200, 202):
+                data = poll.json()
+                if "data" in data:
+                    break
+            else:
+                raise Exception(f"Polling falhou {poll.status_code}: {poll.text[:200]}")
+        else:
+            raise Exception("Timeout: Metabase nao respondeu em 60s")
     if "error" in data:
         raise Exception(data["error"])
     cols = [c["name"] for c in data["data"]["cols"]]
