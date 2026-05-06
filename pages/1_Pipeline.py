@@ -151,17 +151,14 @@ def buscar_lojas_para_intervencao():
           )
         )
         OR
-        -- Lojas com histórico de vendas que zeraram GMV (risco de churn, sem limite de data)
+        -- Lojas que já venderam (base para detecção de queda nos top sellers)
         (
           data_primeira_venda IS NOT NULL
-          AND coalesce(vlr_gmv_ultimos_30d, 0) = 0
         )
       )
     ORDER BY
-      -- Churn primeiro, depois por data de cadastro
-      CASE WHEN data_primeira_venda IS NOT NULL AND coalesce(vlr_gmv_ultimos_30d,0) = 0
-           THEN 0 ELSE 1 END ASC,
       data_cadastro_loja DESC
+    LIMIT 5000
     """
 
     payload = {
@@ -428,55 +425,142 @@ st.divider()
 with st.spinner("Calculando score de risco..."):
     df_diag = diagnosticar_dataframe(df)
 
-# ── DIAGNÓSTICO DE QUEDA (lojas SEM VENDAS RECENTES) ─────────────────────────
-n_queda = len(df[df["status_loja"] == "SEM VENDAS RECENTES"])
+# ── DIAGNÓSTICO DE QUEDA — TOP 50 SELLERS EM RISCO ──────────────────────────
 diag_queda_map = {}
 
-if n_queda > 0:
-    with st.expander(f"🔍 Diagnóstico de queda — {n_queda} loja(s) com histórico de vendas", expanded=True):
+with st.spinner("Identificando top sellers em risco..."):
+    try:
+        df_top = mb.buscar_top_lojas(limite=50)
+        ids_top = set(df_top["conta_id"].astype(int).tolist())
+
+        # Detecta queda: top sellers cujo GMV atual está 20%+ abaixo da média dos últimos 3 meses
+        # Usa buscar_tendencia para pegar histórico mensal e calcular a base
+        from datetime import date
+        from dateutil.relativedelta import relativedelta
+        hoje = date.today()
+        data_fim = (hoje.replace(day=1) - relativedelta(days=1)).strftime("%Y-%m-%d")
+        data_ini = (hoje.replace(day=1) - relativedelta(months=4)).strftime("%Y-%m-%d")
+        m_atual  = (hoje.replace(day=1) - relativedelta(months=1)).strftime("%Y-%m")
+
+        top_sellers_em_risco = []
+        for _, row_top in df_top.iterrows():
+            try:
+                lid = int(row_top["conta_id"])
+                df_tend = mb.buscar_tendencia(lid, data_ini, data_fim)
+                if df_tend.empty or len(df_tend) < 2:
+                    continue
+                # Base = média dos 3 meses anteriores ao mês atual
+                base_df = df_tend[df_tend["mes"] < m_atual].tail(3)
+                if base_df.empty:
+                    continue
+                gmv_base = float(base_df["receita_total"].mean())
+                row_atual = df_tend[df_tend["mes"] == m_atual]
+                if row_atual.empty:
+                    continue
+                gmv_atual = float(row_atual["receita_total"].iloc[0])
+                if gmv_base > 0 and (gmv_base - gmv_atual) / gmv_base >= 0.20:
+                    var_pct = round((gmv_atual - gmv_base) / gmv_base * 100, 1)
+                    top_sellers_em_risco.append({
+                        "loja_id":   lid,
+                        "nome_loja": row_top["nome_loja"],
+                        "segmento":  row_top["segmento"],
+                        "gmv_base":  gmv_base,
+                        "gmv_atual": gmv_atual,
+                        "var_pct":   var_pct,
+                        "gmv_6m":    float(row_top["gmv_6m"]),
+                    })
+            except:
+                continue
+
+        df_churn_top = pd.DataFrame(top_sellers_em_risco)
+        n_top_risco = len(df_churn_top)
+    except Exception as e:
+        df_churn_top = pd.DataFrame()
+        n_top_risco = 0
+        ids_top = set()
+        st.warning(f"Não foi possível carregar top sellers: {e}")
+
+if n_top_risco > 0:
+    with st.expander(f"🔥 Top Sellers em risco — {n_top_risco} loja(s) com queda de 20%+ vs média 3m", expanded=True):
         st.markdown(
-            "<div style='background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;"
-            "padding:.8rem 1rem;font-size:13px;color:#92400E;margin-bottom:.8rem'>"
-            "⚙️ Analisando histórico de GMV, mix de pagamento e base de clientes para cada loja. "
-            "Isso pode levar alguns segundos..."
+            "<div style='background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;"
+            "padding:.8rem 1rem;font-size:13px;color:#991B1B;margin-bottom:.8rem'>"
+            f"🎯 {n_top_risco} loja(s) entre as top 50 por GMV com queda significativa. "
+            "Cada loja já teve histórico de tendência analisado acima — diagnóstico de causa disponível abaixo."
             "</div>",
             unsafe_allow_html=True,
         )
-        progresso = st.progress(0, text="Iniciando análise de queda...")
 
-        def _atualizar_progresso(atual, total):
-            pct = int(atual / total * 100)
-            progresso.progress(pct, text=f"Diagnosticando loja {atual} de {total}...")
+        # Tabela resumida — já temos os dados de tendência
+        rows_ui = []
+        for _, r in df_churn_top.iterrows():
+            rows_ui.append({
+                "ID":             int(r["loja_id"]),
+                "Loja":           r["nome_loja"],
+                "Segmento":       r["segmento"],
+                "GMV base (3m)":  f"R${r['gmv_base']:,.0f}",
+                "GMV mês atual":  f"R${r['gmv_atual']:,.0f}",
+                "Variação":       f"{r['var_pct']:.0f}%",
+                "GMV 6m (hist)":  f"R${r['gmv_6m']:,.0f}",
+            })
+        df_ui = pd.DataFrame(rows_ui).sort_values("Variação")
+        st.dataframe(df_ui, use_container_width=True, hide_index=True)
 
-        try:
-            diag_queda_map = diagnosticar_queda_batch(
-                df_pipeline=df,
-                connector=mb,
-                status_alvo="SEM VENDAS RECENTES",
-                progress_callback=_atualizar_progresso,
-            )
-            progresso.empty()
+        # Diagnóstico de causa raiz para cada loja em risco
+        st.markdown("#### Causa raiz por loja")
+        for _, r in df_churn_top.iterrows():
+            lid = int(r["loja_id"])
+            var = r["var_pct"]
+            cor = "#FEF2F2" if var <= -50 else "#FFFBEB"
+            borda = "#E24B4A" if var <= -50 else "#F59E0B"
+            with st.expander(f"{'🔴' if var <= -50 else '🟡'} {r['nome_loja']} — {var:.0f}% vs média 3m"):
+                try:
+                    res = diag_queda_map.get(lid)
+                    if not res:
+                        from diagnostico_queda import diagnosticar_queda
+                        res = diagnosticar_queda(lid, r["nome_loja"], mb)
+                        diag_queda_map[lid] = res
+                    causas = res.get("causas", [])
+                    sinais = res.get("sinais", {})
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if causas:
+                            for causa in causas:
+                                st.markdown(
+                                    f"<div style='background:{cor};border-left:4px solid {borda};"
+                                    f"border-radius:8px;padding:.7rem;font-size:13px;margin-bottom:6px'>"
+                                    f"{causa['emoji']} {causa['descricao']}</div>",
+                                    unsafe_allow_html=True
+                                )
+                        else:
+                            st.info("Nenhuma causa isolada identificada — análise manual recomendada")
+                    with c2:
+                        gmv_ref  = sinais.get("gmv_mes_ref", 0)
+                        gmv_ant  = sinais.get("gmv_mes_ant", 0)
+                        var_ped  = sinais.get("var_ped_pct")
+                        var_tick = sinais.get("var_tick_pct")
+                        st.markdown(f"**GMV mês ref:** R${gmv_ref:,.0f}")
+                        st.markdown(f"**GMV mês ant:** R${gmv_ant:,.0f}")
+                        if var_ped is not None:
+                            st.markdown(f"**Δ Pedidos:** {var_ped:+.0f}%")
+                        if var_tick is not None:
+                            st.markdown(f"**Δ Ticket médio:** {var_tick:+.0f}%")
+                        formas_rem = sinais.get("formas_removidas", [])
+                        if formas_rem:
+                            st.markdown(f"**Pagamento removido:** {', '.join(formas_rem)}")
+                except Exception as ex:
+                    st.error(f"Erro: {ex}")
 
-            # Mini-tabela de resultados de queda
-            rows_queda = []
-            for loja_id, res in diag_queda_map.items():
-                rows_queda.append({
-                    "ID":           loja_id,
-                    "Loja":         res["nome_loja"],
-                    "Severidade":   res["severidade"],
-                    "Δ GMV":        formatar_variacao_gmv(res),
-                    "Causa raiz":   formatar_causa_curta(res),
-                })
-            df_queda_ui = pd.DataFrame(rows_queda).sort_values(
-                "Severidade",
-                key=lambda s: s.map({"CRÍTICO": 0, "ATENÇÃO": 1, "INVESTIGAR": 2}),
-            )
-            st.dataframe(df_queda_ui, use_container_width=True, hide_index=True)
+    st.divider()
 
-        except Exception as e:
-            progresso.empty()
-            st.error(f"Erro no diagnóstico de queda: {e}")
-
+else:
+    st.markdown(
+        "<div style='background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;"
+        "padding:.8rem 1rem;font-size:13px;color:#166534;margin-bottom:1rem'>"
+        "✅ Nenhum top seller com queda de 20%+ esta semana."
+        "</div>",
+        unsafe_allow_html=True,
+    )
     st.divider()
 
 # Enriquece df_diag com causa de queda para lojas SEM VENDAS RECENTES
