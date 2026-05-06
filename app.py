@@ -423,68 +423,8 @@ if not termo.strip():
             "<div style='font-size:13px;margin-top:8px;color:#9DBDBB'>Conecte ao Metabase para monitorar a base · Digite um ID para diagnosticar</div>"
             "</div>", unsafe_allow_html=True)
     else:
-        tab1, tab2 = st.tabs(["📋 Lojas que precisam de ação", "🔥 Top Sellers em risco"])
-
-        # ── TAB 1: LOJAS QUE PRECISAM DE AÇÃO ────────────────────────────────
-        with tab1:
-            st.caption("Lojas ativas dos ultimos 60 dias com algum bloqueio · ordenadas por score de risco")
-            try:
-                with st.spinner("Carregando base..."):
-                    df_base = buscar_base_monitoramento()
-                if not df_base.empty:
-                    total = len(df_base)
-                    onb_n = len(df_base[df_base["status_loja"]=="ONBOARDING INCOMPLETO"])
-                    nv_n  = len(df_base[df_base["status_loja"]=="NUNCA VENDEU"])
-                    svr_n = len(df_base[df_base["status_loja"]=="SEM VENDAS RECENTES"])
-                    m1,m2,m3,m4 = st.columns(4)
-                    m1.metric("Total para acao", total)
-                    m2.metric("Onboarding incompleto", onb_n)
-                    m3.metric("Nunca vendeu", nv_n)
-                    m4.metric("Sem vendas recentes", svr_n)
-                    st.divider()
-                    cf1,cf2,cf3 = st.columns(3)
-                    with cf1:
-                        f_st = st.selectbox("Status", ["Todos","ONBOARDING INCOMPLETO","NUNCA VENDEU","SEM VENDAS RECENTES"])
-                    with cf2:
-                        f_pl = st.selectbox("Plano", ["Todos","PAGO","GRATIS"])
-                    with cf3:
-                        _segs = ["Todos"] + sorted(df_base["segmento_loja"].dropna().unique().tolist())
-                        f_sg = st.selectbox("Segmento", _segs)
-                    df_f = df_base.copy()
-                    if f_st != "Todos": df_f = df_f[df_f["status_loja"]==f_st]
-                    if f_pl != "Todos": df_f = df_f[df_f["status_plano"]==f_pl]
-                    if f_sg != "Todos": df_f = df_f[df_f["segmento_loja"]==f_sg]
-                    import numpy as np
-                    df_f["dias_cadastro"] = pd.to_numeric(df_f["dias_cadastro"], errors="coerce").fillna(0).astype(int)
-                    df_f["status_loja"]   = df_f["status_loja"].fillna("").astype(str)
-                    df_f["status_plano"]  = df_f["status_plano"].fillna("").astype(str)
-                    _s = df_f["status_loja"]
-                    _d = df_f["dias_cadastro"]
-                    _p = df_f["status_plano"].str.upper()
-                    _score = np.where(_s=="ONBOARDING INCOMPLETO", np.where(_d>=7,70,50),
-                             np.where(_s=="NUNCA VENDEU", np.where(_d>=20,45,25),
-                             np.where(_s=="SEM VENDAS RECENTES", 55, 5)))
-                    _score = np.where(_p=="PAGO", np.minimum(_score+10,100), _score)
-                    df_f["score"] = _score.astype(int)
-                    df_f["prio"]  = pd.cut(df_f["score"], bins=[-1,24,44,69,100], labels=["Baixo","Medio","Alto","Critico"])
-                    df_f = df_f.sort_values("score", ascending=False)
-                    _cs = ["loja_id","nome_loja","segmento_loja","status_loja","score","prio","dias_cadastro","status_plano"]
-                    _ce = [c for c in _cs if c in df_f.columns]
-                    st.dataframe(df_f[_ce].rename(columns={
-                        "loja_id":"ID","nome_loja":"Loja","segmento_loja":"Segmento",
-                        "status_loja":"Status","score":"Score","prio":"Prioridade",
-                        "dias_cadastro":"Dias","status_plano":"Plano"
-                    }), use_container_width=True, hide_index=True)
-                    st.caption(f"{len(df_f)} lojas · Pesquise o ID acima para ver o diagnostico completo")
-                    st.download_button("Exportar CSV",
-                        data=df_f[_ce].to_csv(index=False).encode("utf-8"),
-                        file_name=f"liwatch_base_{datetime.now().strftime('%Y%m%d')}.csv",
-                        mime="text/csv")
-            except Exception as e:
-                st.warning(f"Erro ao carregar base: {e}")
-
-        # ── TAB 2: TOP SELLERS EM RISCO ───────────────────────────────────────
-        with tab2:
+        # ── TOP SELLERS EM RISCO ─────────────────────────────────────────────
+        if True:
             st.caption("Top 100 lojas por GMV — comparando dias 1 até hoje vs média dos últimos 6 meses")
             try:
                 import metabase_connector as mb
