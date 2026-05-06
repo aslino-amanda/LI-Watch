@@ -432,32 +432,22 @@ with st.spinner("Identificando top sellers em risco (comparando mesmos dias dos 
     try:
         df_top = mb.buscar_top_lojas(limite=100)
 
-        # Para cada top seller, compara dias 1-hoje do mês atual vs média dos 6 meses anteriores
-        top_sellers_em_risco = []
-        for _, row_top in df_top.iterrows():
-            try:
-                lid = int(row_top["conta_id"])
-                periodico = mb.buscar_tendencia_periodica(lid)
-                if not periodico or not periodico.get("gmv_media_6m"):
-                    continue
-                var_pct = float(periodico.get("var_pct") or 0)
-                if var_pct <= -20:   # gatilho: queda de 20%+ vs média histórica
-                    top_sellers_em_risco.append({
-                        "loja_id":       lid,
-                        "nome_loja":     row_top["nome_loja"],
-                        "segmento":      row_top["segmento"],
-                        "gmv_media_6m":  periodico["gmv_media_6m"],
-                        "gmv_atual":     periodico["gmv_atual"],
-                        "var_pct":       var_pct,
-                        "gmv_em_risco":  periodico["gmv_em_risco"],
-                        "gmv_6m":        float(row_top["gmv_6m"]),
-                        "historico":     periodico.get("historico", []),
-                        "status_loja":   "SEM VENDAS RECENTES",
-                    })
-            except:
-                continue
-
-        df_churn_top = pd.DataFrame(top_sellers_em_risco)
+        # buscar_top_lojas já retorna var_projetado_pct calculada
+        # Filtra direto quem tem queda >= 20%
+        df_top["var_projetado_pct"] = pd.to_numeric(df_top["var_projetado_pct"], errors="coerce")
+        df_churn_top = df_top[df_top["var_projetado_pct"] <= -20].copy()
+        df_churn_top = df_churn_top.rename(columns={
+            "vlr_gmv_media_2m":   "gmv_media_6m",
+            "vlr_gmv_mes_atual":  "gmv_atual",
+            "vlr_gmv_projetado":  "gmv_projetado",
+            "var_projetado_pct":  "var_pct",
+            "gmv_6m":             "gmv_6m",
+        })
+        df_churn_top["gmv_em_risco"] = (
+            df_churn_top["gmv_media_6m"] - df_churn_top["gmv_projetado"]
+        ).clip(lower=0).round(2)
+        df_churn_top["loja_id"] = df_churn_top["conta_id"]
+        df_churn_top["status_loja"] = "SEM VENDAS RECENTES"
         n_top_risco = len(df_churn_top)
     except Exception as e:
         df_churn_top = pd.DataFrame()
