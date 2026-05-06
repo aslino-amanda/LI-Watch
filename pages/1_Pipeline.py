@@ -428,46 +428,34 @@ with st.spinner("Calculando score de risco..."):
 # ── DIAGNÓSTICO DE QUEDA — TOP 50 SELLERS EM RISCO ──────────────────────────
 diag_queda_map = {}
 
-with st.spinner("Identificando top sellers em risco..."):
+with st.spinner("Identificando top sellers em risco (últimas 2 semanas)..."):
     try:
         df_top = mb.buscar_top_lojas(limite=50)
-        ids_top = set(df_top["conta_id"].astype(int).tolist())
 
-        # Detecta queda: top sellers cujo GMV atual está 20%+ abaixo da média dos últimos 3 meses
-        # Usa buscar_tendencia para pegar histórico mensal e calcular a base
-        from datetime import date
-        from dateutil.relativedelta import relativedelta
-        hoje = date.today()
-        data_fim = (hoje.replace(day=1) - relativedelta(days=1)).strftime("%Y-%m-%d")
-        data_ini = (hoje.replace(day=1) - relativedelta(months=4)).strftime("%Y-%m-%d")
-        m_atual  = (hoje.replace(day=1) - relativedelta(months=1)).strftime("%Y-%m")
-
+        # Para cada top seller, compara últimas 2 semanas vs mesmo período 30 dias atrás
         top_sellers_em_risco = []
         for _, row_top in df_top.iterrows():
             try:
                 lid = int(row_top["conta_id"])
-                df_tend = mb.buscar_tendencia(lid, data_ini, data_fim)
-                if df_tend.empty or len(df_tend) < 2:
+                semanal = mb.buscar_tendencia_semanal(lid)
+                if not semanal or not semanal.get("gmv_anterior"):
                     continue
-                # Base = média dos 3 meses anteriores ao mês atual
-                base_df = df_tend[df_tend["mes"] < m_atual].tail(3)
-                if base_df.empty:
+                gmv_ant  = float(semanal.get("gmv_anterior") or 0)
+                gmv_atu  = float(semanal.get("gmv_atual") or 0)
+                if gmv_ant == 0:
                     continue
-                gmv_base = float(base_df["receita_total"].mean())
-                row_atual = df_tend[df_tend["mes"] == m_atual]
-                if row_atual.empty:
-                    continue
-                gmv_atual = float(row_atual["receita_total"].iloc[0])
-                if gmv_base > 0 and (gmv_base - gmv_atual) / gmv_base >= 0.20:
-                    var_pct = round((gmv_atual - gmv_base) / gmv_base * 100, 1)
+                var_pct = round((gmv_atu - gmv_ant) / gmv_ant * 100, 1)
+                if var_pct <= -20:   # gatilho: queda de 20%+
                     top_sellers_em_risco.append({
-                        "loja_id":   lid,
-                        "nome_loja": row_top["nome_loja"],
-                        "segmento":  row_top["segmento"],
-                        "gmv_base":  gmv_base,
-                        "gmv_atual": gmv_atual,
-                        "var_pct":   var_pct,
-                        "gmv_6m":    float(row_top["gmv_6m"]),
+                        "loja_id":       lid,
+                        "nome_loja":     row_top["nome_loja"],
+                        "segmento":      row_top["segmento"],
+                        "gmv_ref":       gmv_ant,
+                        "gmv_atual":     gmv_atu,
+                        "var_pct":       var_pct,
+                        "gmv_em_risco":  round(gmv_ant - gmv_atu, 2),
+                        "gmv_6m":        float(row_top["gmv_6m"]),
+                        "status_loja":   "SEM VENDAS RECENTES",  # campo necessário para batch
                     })
             except:
                 continue
@@ -477,11 +465,10 @@ with st.spinner("Identificando top sellers em risco..."):
     except Exception as e:
         df_churn_top = pd.DataFrame()
         n_top_risco = 0
-        ids_top = set()
         st.warning(f"Não foi possível carregar top sellers: {e}")
 
 if n_top_risco > 0:
-    with st.expander(f"🔥 Top Sellers em risco — {n_top_risco} loja(s) com queda de 20%+ vs média 3m", expanded=True):
+    with st.expander(f"🔥 Top Sellers em risco — {n_top_risco} loja(s) com queda 20%+ nas últimas 2 semanas", expanded=True):
         st.markdown(
             "<div style='background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;"
             "padding:.8rem 1rem;font-size:13px;color:#991B1B;margin-bottom:.8rem'>"
@@ -491,17 +478,18 @@ if n_top_risco > 0:
             unsafe_allow_html=True,
         )
 
-        # Tabela resumida — já temos os dados de tendência
+        # Tabela resumida — dados da comparação semanal
         rows_ui = []
         for _, r in df_churn_top.iterrows():
             rows_ui.append({
-                "ID":             int(r["loja_id"]),
-                "Loja":           r["nome_loja"],
-                "Segmento":       r["segmento"],
-                "GMV base (3m)":  f"R${r['gmv_base']:,.0f}",
-                "GMV mês atual":  f"R${r['gmv_atual']:,.0f}",
-                "Variação":       f"{r['var_pct']:.0f}%",
-                "GMV 6m (hist)":  f"R${r['gmv_6m']:,.0f}",
+                "ID":              int(r["loja_id"]),
+                "Loja":            r["nome_loja"],
+                "Segmento":        r["segmento"],
+                "GMV ref (2sem)":  f"R${r['gmv_ref']:,.0f}",
+                "GMV atual (2sem)": f"R${r['gmv_atual']:,.0f}",
+                "Variação":        f"{r['var_pct']:.0f}%",
+                "GMV em risco":    f"R${r['gmv_em_risco']:,.0f}",
+                "GMV 6m (hist)":   f"R${r['gmv_6m']:,.0f}",
             })
         df_ui = pd.DataFrame(rows_ui).sort_values("Variação")
         st.dataframe(df_ui, use_container_width=True, hide_index=True)
