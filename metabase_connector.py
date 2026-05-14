@@ -495,60 +495,96 @@ ORDER BY A.conta_id, mes ASC
 def buscar_tendencia_semanal(conta_id: int) -> dict:
     """
     Compara as últimas 2 semanas vs mesmo período 30 dias atrás.
-    Retorna dict com gmv_atual, gmv_anterior, variações e status de risco.
+
+    Fix v2: quebrado em 2 queries independentes em vez de um CROSS JOIN pesado.
+    O CROSS JOIN entre dois CTEs agregados causava timeout no Metabase (>60s),
+    fazendo o conector retornar {} e o app classificar lojas em queda como saudáveis.
+    Agora cada query roda separada e o join é feito em Python.
     """
-    sql = f"""
-WITH
-periodo_atual AS (
-    SELECT
-        COUNT(DISTINCT A.pedido_venda_id)            AS pedidos_atual,
-        ROUND(SUM(A.pedido_venda_valor_total), 2)    AS gmv_atual,
-        ROUND(AVG(A.pedido_venda_valor_total), 2)    AS ticket_atual,
-        MIN(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS de,
-        MAX(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS ate
-    FROM pedido_tb_pedido_venda A
-    INNER JOIN pedido_tb_pedido_venda_situacao D
-        ON A.pedido_venda_situacao_id = D.pedido_venda_situacao_id
-    WHERE A.conta_id = {conta_id}
-      AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
-          >= DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo')) - INTERVAL 14 DAY
-      AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
-          < DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo'))
-      AND D.pedido_venda_situacao_nome != 'Pedido Cancelado'
-),
-periodo_anterior AS (
-    SELECT
-        COUNT(DISTINCT A.pedido_venda_id)            AS pedidos_anterior,
-        ROUND(SUM(A.pedido_venda_valor_total), 2)    AS gmv_anterior,
-        ROUND(AVG(A.pedido_venda_valor_total), 2)    AS ticket_anterior,
-        MIN(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS de,
-        MAX(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS ate
-    FROM pedido_tb_pedido_venda A
-    INNER JOIN pedido_tb_pedido_venda_situacao D
-        ON A.pedido_venda_situacao_id = D.pedido_venda_situacao_id
-    WHERE A.conta_id = {conta_id}
-      AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
-          >= DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo')) - INTERVAL 44 DAY
-      AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
-          < DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo')) - INTERVAL 30 DAY
-      AND D.pedido_venda_situacao_nome != 'Pedido Cancelado'
-)
+    sql_atual = f"""
 SELECT
-    a.pedidos_atual, a.gmv_atual, a.ticket_atual, a.de AS atual_de, a.ate AS atual_ate,
-    p.pedidos_anterior, p.gmv_anterior, p.ticket_anterior, p.de AS ref_de, p.ate AS ref_ate,
-    ROUND((a.gmv_atual - p.gmv_anterior) / p.gmv_anterior * 100, 1)            AS var_gmv_pct,
-    ROUND((a.pedidos_atual - p.pedidos_anterior) / p.pedidos_anterior * 100, 1) AS var_pedidos_pct,
-    ROUND((a.ticket_atual - p.ticket_anterior) / p.ticket_anterior * 100, 1)    AS var_ticket_pct,
-    ROUND(p.gmv_anterior - a.gmv_atual, 2)                                      AS gmv_em_risco
-FROM periodo_atual a
-CROSS JOIN periodo_anterior p
+    COUNT(DISTINCT A.pedido_venda_id)            AS pedidos_atual,
+    ROUND(SUM(A.pedido_venda_valor_total), 2)    AS gmv_atual,
+    ROUND(AVG(A.pedido_venda_valor_total), 2)    AS ticket_atual,
+    MIN(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS atual_de,
+    MAX(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS atual_ate
+FROM pedido_tb_pedido_venda A
+INNER JOIN pedido_tb_pedido_venda_situacao D
+    ON A.pedido_venda_situacao_id = D.pedido_venda_situacao_id
+WHERE A.conta_id = {conta_id}
+  AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
+      >= DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo')) - INTERVAL 14 DAY
+  AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
+      < DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo'))
+  AND D.pedido_venda_situacao_nome != 'Pedido Cancelado'
     """
-    df = _rodar_sql(sql)
-    if df.empty:
+
+    sql_anterior = f"""
+SELECT
+    COUNT(DISTINCT A.pedido_venda_id)            AS pedidos_anterior,
+    ROUND(SUM(A.pedido_venda_valor_total), 2)    AS gmv_anterior,
+    ROUND(AVG(A.pedido_venda_valor_total), 2)    AS ticket_anterior,
+    MIN(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS ref_de,
+    MAX(DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))) AS ref_ate
+FROM pedido_tb_pedido_venda A
+INNER JOIN pedido_tb_pedido_venda_situacao D
+    ON A.pedido_venda_situacao_id = D.pedido_venda_situacao_id
+WHERE A.conta_id = {conta_id}
+  AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
+      >= DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo')) - INTERVAL 44 DAY
+  AND DATE(CONVERT_TZ(A.pedido_venda_data_criacao, '+00:00', 'America/Sao_Paulo'))
+      < DATE(CONVERT_TZ(NOW(), '+00:00', 'America/Sao_Paulo')) - INTERVAL 30 DAY
+  AND D.pedido_venda_situacao_nome != 'Pedido Cancelado'
+    """
+
+    try:
+        df_at  = _rodar_sql(sql_atual)
+        df_ant = _rodar_sql(sql_anterior)
+    except Exception:
         return {}
-    row = df.iloc[0].to_dict()
-    # Converte para tipos Python nativos
-    return {k: (float(v) if hasattr(v, '__float__') else str(v)) for k, v in row.items()}
+
+    if df_at.empty or df_ant.empty:
+        return {}
+
+    a = df_at.iloc[0]
+    p = df_ant.iloc[0]
+
+    def _f(v):
+        try:
+            import math
+            f = float(v or 0)
+            return 0.0 if math.isnan(f) else f
+        except Exception:
+            return 0.0
+
+    gmv_at   = _f(a.get("gmv_atual"))
+    gmv_ant  = _f(p.get("gmv_anterior"))
+    ped_at   = _f(a.get("pedidos_atual"))
+    ped_ant  = _f(p.get("pedidos_anterior"))
+    tick_at  = _f(a.get("ticket_atual"))
+    tick_ant = _f(p.get("ticket_anterior"))
+
+    def _var(novo, velho):
+        if velho == 0:
+            return 0.0
+        return round((novo - velho) / velho * 100, 1)
+
+    return {
+        "pedidos_atual":    ped_at,
+        "gmv_atual":        gmv_at,
+        "ticket_atual":     tick_at,
+        "atual_de":         str(a.get("atual_de", "")),
+        "atual_ate":        str(a.get("atual_ate", "")),
+        "pedidos_anterior": ped_ant,
+        "gmv_anterior":     gmv_ant,
+        "ticket_anterior":  tick_ant,
+        "ref_de":           str(p.get("ref_de", "")),
+        "ref_ate":          str(p.get("ref_ate", "")),
+        "var_gmv_pct":      _var(gmv_at, gmv_ant),
+        "var_pedidos_pct":  _var(ped_at, ped_ant),
+        "var_ticket_pct":   _var(tick_at, tick_ant),
+        "gmv_em_risco":     round(gmv_ant - gmv_at, 2) if gmv_ant > gmv_at else 0.0,
+    }
 
 def buscar_clientes_churned(conta_id: int, ref_inicio: str, ref_fim: str, corte: str) -> pd.DataFrame:
     """Query 7 da skill — clientes que sumiram após o período de referência."""
