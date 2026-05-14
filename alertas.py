@@ -1,6 +1,9 @@
 """
-LI Watch — Sistema de Alertas Proativos
+LI Watch — Sistema de Alertas Proativos v2
 Detecta eventos críticos e exibe no topo do app em tempo real.
+
+v2: Adiciona ALERTA 6 — Queda crítica em lojas ativas (o bug da Arco Íris LED).
+    Lojas com GMV > 0 mas em declínio acelerado agora aparecem na fila.
 """
 
 import streamlit as st
@@ -8,12 +11,16 @@ import pandas as pd
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+
 # ── REGRAS DE ALERTA ──────────────────────────────────────────────────────────
 
-def detectar_alertas(df: pd.DataFrame) -> list:
+def detectar_alertas(df: pd.DataFrame, df_tendencias: Optional[dict] = None) -> list:
     """
     Analisa o DataFrame de lojas e retorna lista de alertas.
     Cada alerta tem: tipo, severidade, titulo, descricao, qtde, acao
+
+    df_tendencias: dict opcional { loja_id -> var_gmv_pct (float, ex: -0.45) }
+    Quando fornecido, ativa o ALERTA 6 de queda em lojas ativas.
     """
     alertas = []
     hoje = date.today()
@@ -143,19 +150,74 @@ def detectar_alertas(df: pd.DataFrame) -> list:
             "cor_texto":  "#92400E",
         })
 
-    # Ordena por severidade
+    # ── ALERTA 6: Lojas ATIVAS com queda crítica de GMV ──────────────────────
+    # Este alerta resolve o "bug da Arco Íris LED":
+    # Lojas que vendem mas estão em colapso silencioso não aparecem nos alertas anteriores.
+    # df_tendencias = { loja_id: var_gmv_pct } — vem da buscar_tendencia_semanal em batch.
+    if df_tendencias:
+        lojas_queda_critica = {
+            lid: var for lid, var in df_tendencias.items()
+            if isinstance(var, (int, float)) and var <= -0.30
+        }
+        lojas_queda_atencao = {
+            lid: var for lid, var in df_tendencias.items()
+            if isinstance(var, (int, float)) and -0.30 < var <= -0.20
+        }
+
+        if lojas_queda_critica:
+            piores = sorted(lojas_queda_critica.items(), key=lambda x: x[1])[:3]
+            nomes_piores = []
+            for lid, _ in piores:
+                row = df[df["loja_id"] == lid]
+                nome = row["nome_loja"].values[0] if not row.empty else str(lid)
+                nomes_piores.append(nome)
+            descricao_piores = ", ".join(nomes_piores)
+            if len(lojas_queda_critica) > 3:
+                descricao_piores += f" e mais {len(lojas_queda_critica)-3}"
+
+            alertas.append({
+                "tipo":       "QUEDA_ATIVA",
+                "severidade": "CRÍTICO",
+                "emoji":      "🔴",
+                "titulo":     f"{len(lojas_queda_critica)} loja(s) ATIVA(s) com queda de GMV acima de 30%",
+                "descricao":  f"Declínio acelerado detectado — aparecem como saudáveis mas estão em colapso. Ex: {descricao_piores}.",
+                "qtde":       len(lojas_queda_critica),
+                "acao":       "Raio X imediato — diagnóstico de queda",
+                "cor_bg":     "#FEF2F2",
+                "cor_borda":  "#E24B4A",
+                "cor_texto":  "#991B1B",
+                "lojas_ids":  list(lojas_queda_critica.keys()),
+            })
+
+        if lojas_queda_atencao:
+            alertas.append({
+                "tipo":       "QUEDA_ATIVA_ATENCAO",
+                "severidade": "ATENÇÃO",
+                "emoji":      "📉",
+                "titulo":     f"{len(lojas_queda_atencao)} loja(s) ATIVA(s) com queda de GMV entre 20% e 30%",
+                "descricao":  "Tendência de queda identificada. Monitorar antes que vire colapso.",
+                "qtde":       len(lojas_queda_atencao),
+                "acao":       "Agendar diagnóstico preventivo",
+                "cor_bg":     "#FFFBEB",
+                "cor_borda":  "#F59E0B",
+                "cor_texto":  "#92400E",
+                "lojas_ids":  list(lojas_queda_atencao.keys()),
+            })
+
+    # ── ORDENAÇÃO por severidade ──────────────────────────────────────────────
     ordem = {"CRÍTICO": 0, "ATENÇÃO": 1, "INFO": 2}
     alertas.sort(key=lambda x: ordem.get(x["severidade"], 3))
 
     return alertas
 
 
-def exibir_alertas(df: pd.DataFrame):
+def exibir_alertas(df: pd.DataFrame, df_tendencias: Optional[dict] = None):
     """
     Exibe o painel de alertas no topo do app.
     Chame no início de cada página.
+    df_tendencias: dict { loja_id -> var_gmv_pct } — opcional, ativa alerta de queda em ativas.
     """
-    alertas = detectar_alertas(df)
+    alertas = detectar_alertas(df, df_tendencias)
 
     if not alertas:
         st.markdown("""
@@ -166,7 +228,6 @@ def exibir_alertas(df: pd.DataFrame):
         """, unsafe_allow_html=True)
         return
 
-    # Header do painel de alertas
     n_criticos = sum(1 for a in alertas if a["severidade"] == "CRÍTICO")
     n_atencao  = sum(1 for a in alertas if a["severidade"] == "ATENÇÃO")
 
@@ -186,7 +247,6 @@ def exibir_alertas(df: pd.DataFrame):
     </div>
     """, unsafe_allow_html=True)
 
-    # Exibe cada alerta
     for alerta in alertas:
         col_alert, col_acao = st.columns([4, 1])
         with col_alert:
